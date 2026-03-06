@@ -139,6 +139,10 @@
             color: #e2e8f0;
         }
         .btn-secondary:hover { background: #475569; }
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
         .recommendation {
             background: linear-gradient(135deg, rgba(251, 191, 36, 0.1), rgba(251, 191, 36, 0.05));
             border: 1px solid rgba(251, 191, 36, 0.3);
@@ -198,6 +202,73 @@
         .arrow {
             font-size: 2rem;
             color: #475569;
+        }
+        .api-status {
+            display: flex;
+            gap: 15px;
+            margin-top: 15px;
+            flex-wrap: wrap;
+        }
+        .api-item {
+            background: #0f172a;
+            padding: 15px 20px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex: 1;
+            min-width: 200px;
+        }
+        .api-indicator {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+        .api-configured { background: #22c55e; }
+        .api-not-configured { background: #64748b; }
+        .purchase-options {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+        .purchase-card {
+            background: #0f172a;
+            padding: 20px;
+            border-radius: 10px;
+            border: 1px solid #334155;
+        }
+        .purchase-card h4 {
+            color: #e2e8f0;
+            margin-bottom: 10px;
+        }
+        .purchase-card .status {
+            color: #94a3b8;
+            font-size: 0.875rem;
+            margin-bottom: 15px;
+        }
+        .config-panel {
+            background: #0f172a;
+            padding: 20px;
+            border-radius: 10px;
+            margin-top: 15px;
+            border: 1px solid #334155;
+        }
+        .config-panel code {
+            background: #1e293b;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: monospace;
+            color: #fbbf24;
+        }
+        .config-panel pre {
+            background: #1e293b;
+            padding: 15px;
+            border-radius: 8px;
+            overflow-x: auto;
+            margin-top: 10px;
+            color: #e2e8f0;
+            font-size: 0.875rem;
         }
     </style>
 </head>
@@ -340,7 +411,7 @@
         {% endif %}
 
         <div class="card">
-            <h3>🚀 Aktionen</h3>
+            <h3>🔗 Schnell-Links</h3>
             
             <div class="action-buttons" style="margin-top: 15px;">
                 <a href="https://www.namecheap.com/domains/registration/results/?domain={{ domain.domain_name }}.{{ domain.tld }}" 
@@ -353,20 +424,147 @@
                     🔍 Bei GoDaddy prüfen
                 </a>
                 
-                {% if domain.valuation_score >= 70 %}
                 <a href="https://www.dynadot.com/domain/search?domain={{ domain.domain_name }}.{{ domain.tld }}" 
-                   target="_blank" class="btn btn-success">
-                    🛒 Kaufen bei Dynadot
+                   target="_blank" class="btn btn-secondary">
+                    🔍 Bei Dynadot prüfen
                 </a>
-                {% endif %}
                 
                 <a href="/domains" class="btn btn-secondary">← Zurück zur Liste</a>
             </div>
-            
-            <p style="margin-top: 20px; color: #94a3b8; font-size: 0.875rem;">
-                ℹ️ Die Kauf-Links öffnen externe Registrare. Preise und Verfügbarkeit können abweichen.
+        </div>
+
+        <div class="card">
+            <h3>🛒 API-Kauf-Integration</h3>
+            <p style="color: #94a3b8; margin-top: 10px;">
+                Kaufe diese Domain direkt über die Registrar-APIs. 
+                <span id="api-status-text">Prüfe API-Status...</span>
             </p>
+            
+            <div class="api-status" id="api-status">
+                <!-- Wird via JavaScript gefüllt -->
+            </div>
+            
+            <div id="purchase-section">
+                <div class="purchase-options" id="purchase-options">
+                    <!-- Wird via JavaScript gefüllt -->
+                </div>
+            </div>
         </div>
     </div>
+
+    <script>
+        const domainName = '{{ domain.domain_name }}';
+        const tld = '{{ domain.tld }}';
+        
+        async function loadApiStatus() {
+            try {
+                const response = await fetch('/api/config/registrars');
+                const data = await response.json();
+                
+                const apiStatusDiv = document.getElementById('api-status');
+                const purchaseOptionsDiv = document.getElementById('purchase-options');
+                const statusText = document.getElementById('api-status-text');
+                
+                let configuredCount = 0;
+                let html = '';
+                let purchaseHtml = '';
+                
+                for (const [registrar, config] of Object.entries(data.registrars)) {
+                    const isConfigured = config.configured;
+                    if (isConfigured) configuredCount++;
+                    
+                    html += `
+                        <div class="api-item">
+                            <span class="api-indicator ${isConfigured ? 'api-configured' : 'api-not-configured'}"></span>
+                            <span>${registrar.charAt(0).toUpperCase() + registrar.slice(1)} 
+                                ${isConfigured ? '✓ Konfiguriert' : '✗ Nicht konfiguriert'}
+                            </span>
+                        </div>
+                    `;
+                    
+                    if (isConfigured) {
+                        purchaseHtml += `
+                            <div class="purchase-card">
+                                <h4>${registrar.charAt(0).toUpperCase() + registrar.slice(1)}</h4>
+                                <p class="status">API bereit für automatischen Kauf</p>
+                                <button class="btn btn-success" onclick="addToCart('${registrar}')">
+                                    🛒 Zum Warenkorb hinzufügen
+                                </button>
+                            </div>
+                        `;
+                    } else {
+                        purchaseHtml += `
+                            <div class="purchase-card">
+                                <h4>${registrar.charAt(0).toUpperCase() + registrar.slice(1)}</h4>
+                                <p class="status">API nicht konfiguriert</p>
+                                <a href="https://www.${registrar}.com/domains/registration/results/?domain=${domainName}.${tld}" 
+                                   target="_blank" class="btn btn-primary">
+                                    🔍 Manuell prüfen
+                                </a>
+                            </div>
+                        `;
+                    }
+                }
+                
+                apiStatusDiv.innerHTML = html;
+                purchaseOptionsDiv.innerHTML = purchaseHtml;
+                
+                if (configuredCount === 0) {
+                    statusText.innerHTML = `<span style="color: #f59e0b;">Keine APIs konfiguriert. <a href="#" onclick="showSetupInstructions(); return false;">Setup-Anleitung anzeigen</a></span>`;
+                } else {
+                    statusText.innerHTML = `<span style="color: #22c55e;">${configuredCount} API(s) konfiguriert</span>`;
+                }
+            } catch (error) {
+                console.error('API-Status konnte nicht geladen werden:', error);
+            }
+        }
+        
+        async function addToCart(registrar) {
+            try {
+                const response = await fetch(`/api/purchase/cart/${registrar}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ domain_name: domainName, tld: tld })
+                });
+                
+                const data = await response.json();
+                
+                if (data.status === 'config_required') {
+                    alert('API-Key erforderlich.\n\n' + data.setup_instructions);
+                } else if (data.status === 'simulated') {
+                    alert('✅ ' + data.message + '\n\n(Im Simulationsmodus - echte API-Integration erfordert gültige API-Keys)');
+                } else {
+                    alert('✅ Domain wurde zum Warenkorb hinzugefügt!');
+                }
+            } catch (error) {
+                alert('Fehler: ' + error.message);
+            }
+        }
+        
+        function showSetupInstructions() {
+            const instructions = `
+Um die API-Kauf-Integration zu aktivieren:
+
+1. **Namecheap:**
+   - Erstelle einen API-Key unter: https://ap.www.namecheap.com/settings/tools/apiaccess/
+   - Setze Umgebungsvariable: export NAMECHEAP_API_KEY=dein_key
+
+2. **GoDaddy:**
+   - API-Key unter: https://developer.godaddy.com/keys/
+   - Setze Umgebungsvariablen:
+     export GODADDY_API_KEY=dein_key
+     export GODADDY_API_SECRET=dein_secret
+
+3. **Dynadot:**
+   - API-Key unter: https://www.dynadot.com/account/domain/api.html
+   - Setze Umgebungsvariable: export DYNADOT_API_KEY=dein_key
+
+Nach dem Setzen der Umgebungsvariablen Dashboard neu starten.
+            `;
+            alert(instructions);
+        }
+        
+        loadApiStatus();
+    </script>
 </body>
 </html>

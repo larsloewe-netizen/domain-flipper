@@ -10,8 +10,10 @@ import sqlite3
 import json
 import subprocess
 import threading
-from datetime import datetime
-from flask import Flask, render_template, jsonify, request, send_from_directory
+import csv
+import io
+from datetime import datetime, timedelta
+from flask import Flask, render_template, jsonify, request, send_from_directory, Response
 
 # Add parent directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -307,6 +309,343 @@ def api_domains():
     conn.close()
     
     return jsonify(domains)
+
+
+@app.route('/api/charts')
+def get_charts_data():
+    """API-Endpoint für Chart-Daten."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # TLD-Verteilung
+    cursor.execute('''
+        SELECT tld, COUNT(*) as count
+        FROM domains
+        WHERE tld IS NOT NULL
+        GROUP BY tld
+        ORDER BY count DESC
+        LIMIT 10
+    ''')
+    tld_distribution = [{'tld': row[0], 'count': row[1]} for row in cursor.fetchall()]
+    
+    # Score-Verteilung
+    cursor.execute('''
+        SELECT 
+            CASE 
+                WHEN valuation_score >= 80 THEN '80-100'
+                WHEN valuation_score >= 60 THEN '60-79'
+                WHEN valuation_score >= 40 THEN '40-59'
+                WHEN valuation_score >= 20 THEN '20-39'
+                ELSE '0-19'
+            END as score_range,
+            COUNT(*) as count
+        FROM domains
+        WHERE valuation_score IS NOT NULL
+        GROUP BY score_range
+        ORDER BY score_range DESC
+    ''')
+    score_distribution = [{'range': row[0], 'count': row[1]} for row in cursor.fetchall()]
+    
+    # Tägliche Entwicklung (letzte 14 Tage)
+    cursor.execute('''
+        SELECT DATE(found_at) as date, COUNT(*) as count
+        FROM domains
+        WHERE found_at >= DATE("now", "-14 days")
+        GROUP BY DATE(found_at)
+        ORDER BY date
+    ''')
+    daily_growth = [{'date': row[0], 'count': row[1]} for row in cursor.fetchall()]
+    
+    # High-Potential über Zeit
+    cursor.execute('''
+        SELECT DATE(found_at) as date, COUNT(*) as count
+        FROM domains
+        WHERE valuation_score >= 70 AND found_at >= DATE("now", "-14 days")
+        GROUP BY DATE(found_at)
+        ORDER BY date
+    ''')
+    high_potential_over_time = [{'date': row[0], 'count': row[1]} for row in cursor.fetchall()]
+    
+    # Preisverteilung
+    cursor.execute('''
+        SELECT 
+            CASE 
+                WHEN current_price < 10 THEN '< $10'
+                WHEN current_price < 50 THEN '$10-49'
+                WHEN current_price < 100 THEN '$50-99'
+                WHEN current_price < 500 THEN '$100-499'
+                ELSE '$500+'
+            END as price_range,
+            COUNT(*) as count
+        FROM domains
+        WHERE current_price IS NOT NULL
+        GROUP BY price_range
+        ORDER BY current_price
+    ''')
+    price_distribution = [{'range': row[0], 'count': row[1]} for row in cursor.fetchall()]
+    
+    conn.close()
+    
+    return jsonify({
+        'tld_distribution': tld_distribution,
+        'score_distribution': score_distribution,
+        'daily_growth': daily_growth,
+        'high_potential_over_time': high_potential_over_time,
+        'price_distribution': price_distribution
+    })
+
+
+@app.route('/api/export/csv')
+def export_csv():
+    """Exportiert Domains als CSV."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Filter-Parameter
+    min_score = request.args.get('min_score')
+    filter_tld = request.args.get('tld', '')
+    
+    query = 'SELECT * FROM domains WHERE 1=1'
+    params = []
+    
+    if min_score:
+        query += ' AND valuation_score >= ?'
+        params.append(int(min_score))
+    
+    if filter_tld:
+        query += ' AND tld = ?'
+        params.append(filter_tld)
+    
+    query += ' ORDER BY found_at DESC'
+    
+    cursor.execute(query, params)
+    domains = cursor.fetchall()
+    conn.close()
+    
+    # CSV erstellen
+    output = io.StringIO()
+    writer = csv.writer(output)
+    
+    # Header
+    headers = ['domain_name', 'tld', 'age_days', 'backlinks', 'authority_score', 
+               'current_price', 'auction_status', 'valuation_score', 
+               'estimated_sell_price', 'status', 'found_at']
+    writer.writerow(headers)
+    
+    # Daten
+    for domain in domains:
+        writer.writerow([
+            domain['domain_name'],
+            domain['tld'],
+            domain['age_days'],
+            domain['backlinks'],
+            domain['authority_score'],
+            domain['current_price'],
+            domain['auction_status'],
+            domain['valuation_score'],
+            domain['estimated_sell_price'],
+            domain['status'],
+            domain['found_at']
+        ])
+    
+    output.seek(0)
+    
+    return Response(
+        output,
+        mimetype='text/csv',
+        headers={
+            'Content-Disposition': f'attachment; filename=domains_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
+        }
+    )
+
+
+@app.route('/api/export/json')
+def export_json():
+    """Exportiert Domains als JSON."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Filter-Parameter
+    min_score = request.args.get('min_score')
+    filter_tld = request.args.get('tld', '')
+    
+    query = 'SELECT * FROM domains WHERE 1=1'
+    params = []
+    
+    if min_score:
+        query += ' AND valuation_score >= ?'
+        params.append(int(min_score))
+    
+    if filter_tld:
+        query += ' AND tld = ?'
+        params.append(filter_tld)
+    
+    query += ' ORDER BY found_at DESC'
+    
+    cursor.execute(query, params)
+    domains = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    
+    return Response(
+        json.dumps(domains, indent=2, default=str),
+        mimetype='application/json',
+        headers={
+            'Content-Disposition': f'attachment; filename=domains_{datetime.now().strftime("%Y%m%d_%H%M%S")}.json'
+        }
+    )
+
+
+# ============================================
+# KAUF-INTEGRATION ÜBER REGISTRAR APIs
+# ============================================
+
+@app.route('/api/purchase/check/<domain_name>')
+def check_domain_availability(domain_name):
+    """Prüft Verfügbarkeit einer Domain bei verschiedenen Registraren."""
+    import requests
+    
+    tld = request.args.get('tld', 'com')
+    results = {}
+    
+    # Namecheap API Check (simuliert - erfordert API-Key)
+    try:
+        # Hier würde der echte Namecheap API-Call kommen
+        # https://api.namecheap.com/xml.response?ApiUser=...&ApiKey=...&Command=namecheap.domains.check&DomainList=...
+        results['namecheap'] = {
+            'available': None,  # Würde von API kommen
+            'price': None,
+            'currency': 'USD',
+            'api_required': True,
+            'docs': 'https://www.namecheap.com/support/api/intro/'
+        }
+    except Exception as e:
+        results['namecheap'] = {'error': str(e)}
+    
+    # GoDaddy API Check (simuliert - erfordert API-Key)
+    try:
+        # Hier würde der echte GoDaddy API-Call kommen
+        # https://api.godaddy.com/v1/domains/available?domain=...
+        results['godaddy'] = {
+            'available': None,
+            'price': None,
+            'currency': 'USD',
+            'api_required': True,
+            'docs': 'https://developer.godaddy.com/'
+        }
+    except Exception as e:
+        results['godaddy'] = {'error': str(e)}
+    
+    # Dynadot API Check (simuliert - erfordert API-Key)
+    try:
+        results['dynadot'] = {
+            'available': None,
+            'price': None,
+            'currency': 'USD',
+            'api_required': True,
+            'docs': 'https://www.dynadot.com/domain/api.html'
+        }
+    except Exception as e:
+        results['dynadot'] = {'error': str(e)}
+    
+    return jsonify({
+        'domain': f"{domain_name}.{tld}",
+        'check_time': datetime.now().isoformat(),
+        'results': results,
+        'note': 'Für echte Verfügbarkeitsprüfungen müssen API-Keys konfiguriert werden'
+    })
+
+
+@app.route('/api/purchase/cart/<registrar>', methods=['POST'])
+def add_to_cart(registrar):
+    """Fügt eine Domain zum Warenkorb eines Registrars hinzu (API-Integration)."""
+    data = request.get_json() or {}
+    domain_name = data.get('domain_name')
+    tld = data.get('tld', 'com')
+    
+    if not domain_name:
+        return jsonify({'error': 'Domain-Name erforderlich'}), 400
+    
+    if registrar not in ['namecheap', 'godaddy', 'dynadot']:
+        return jsonify({'error': 'Unbekannter Registrar'}), 400
+    
+    # Konfiguration für APIs (muss mit echten Keys gefüllt werden)
+    api_config = {
+        'namecheap': {
+            'api_url': 'https://api.namecheap.com/xml.response',
+            'docs': 'https://www.namecheap.com/support/api/intro/',
+            'required_keys': ['api_user', 'api_key', 'username', 'client_ip']
+        },
+        'godaddy': {
+            'api_url': 'https://api.godaddy.com/v1/domains/purchase',
+            'docs': 'https://developer.godaddy.com/',
+            'required_keys': ['api_key', 'api_secret']
+        },
+        'dynadot': {
+            'api_url': 'https://api.dynadot.com/api3.json',
+            'docs': 'https://www.dynadot.com/domain/api.html',
+            'required_keys': ['api_key']
+        }
+    }
+    
+    config = api_config.get(registrar)
+    
+    # Prüfe ob API-Keys konfiguriert sind
+    env_prefix = f"{registrar.upper()}_API"
+    missing_keys = []
+    for key in config['required_keys']:
+        env_key = f"{env_prefix}_{key.upper()}"
+        if not os.getenv(env_key):
+            missing_keys.append(env_key)
+    
+    if missing_keys:
+        return jsonify({
+            'status': 'config_required',
+            'message': f'API-Keys für {registrar} nicht konfiguriert',
+            'missing_env_vars': missing_keys,
+            'setup_instructions': f"""
+Um den automatischen Kauf über {registrar} zu aktivieren:
+
+1. Erstelle ein API-Konto bei {registrar}
+2. Füge folgende Umgebungsvariablen hinzu:
+{chr(10).join([f'   export {k}=dein_key_hier' for k in missing_keys])}
+
+3. Oder erstelle eine .env Datei im Projekt-Root
+
+Dokumentation: {config['docs']}
+            """.strip(),
+            'manual_link': f"https://www.{registrar}.com/domains/registration/results/?domain={domain_name}.{tld}"
+        }), 200
+    
+    # Hier würde der echte API-Call zum Hinzufügen zum Warenkorb kommen
+    # Zum jetzigen Zeitpunkt nur simuliert
+    
+    return jsonify({
+        'status': 'simulated',
+        'message': f'{domain_name}.{tld} würde zu {registrar} Warenkorb hinzugefügt',
+        'registrar': registrar,
+        'domain': f'{domain_name}.{tld}',
+        'note': 'Echte API-Integration erfordert gültige API-Keys und Kontostand'
+    })
+
+
+@app.route('/api/config/registrars')
+def get_registrar_config():
+    """Zeigt den aktuellen Status der Registrar-API-Konfiguration."""
+    registrars = ['NAMECHEAP', 'GODADDY', 'DYNADOT']
+    status = {}
+    
+    for reg in registrars:
+        has_key = bool(os.getenv(f'{reg}_API_KEY'))
+        status[reg.lower()] = {
+            'configured': has_key,
+            'env_var': f'{reg}_API_KEY',
+            'masked_key': os.getenv(f'{reg}_API_KEY', '')[:4] + '****' if has_key else None
+        }
+    
+    return jsonify({
+        'registrars': status,
+        'note': 'API-Keys werden aus Umgebungsvariablen gelesen'
+    })
 
 
 if __name__ == '__main__':
