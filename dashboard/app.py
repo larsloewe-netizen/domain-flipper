@@ -50,7 +50,7 @@ def index():
     cursor.execute('SELECT COUNT(*) FROM domains WHERE valuation_score >= 70')
     high_potential = cursor.fetchone()[0]
     
-    cursor.execute('SELECT COUNT(*) FROM domains WHERE DATE(found_at) = DATE("now")')
+    cursor.execute('SELECT COUNT(*) FROM domains WHERE DATE(first_seen) = DATE("now")')
     new_today = cursor.fetchone()[0]
     
     cursor.execute('SELECT AVG(valuation_score) FROM domains WHERE valuation_score IS NOT NULL')
@@ -58,7 +58,7 @@ def index():
     
     # Top 5 Domains
     cursor.execute('''
-        SELECT domain_name, tld, valuation_score, estimated_sell_price, current_price
+        SELECT domain_name, tld, valuation_score, estimated_sell_price, price
         FROM domains
         WHERE valuation_score >= 70
         ORDER BY valuation_score DESC
@@ -68,9 +68,9 @@ def index():
     
     # Letzte 5 Domains
     cursor.execute('''
-        SELECT domain_name, tld, found_at, valuation_score
+        SELECT domain_name, tld, first_seen, valuation_score
         FROM domains
-        ORDER BY found_at DESC
+        ORDER BY first_seen DESC
         LIMIT 5
     ''')
     recent_domains = [dict(row) for row in cursor.fetchall()]
@@ -96,7 +96,7 @@ def domains():
     cursor = conn.cursor()
     
     # Query-Parameter
-    sort_by = request.args.get('sort', 'found_at')
+    sort_by = request.args.get('sort', 'first_seen')
     order = request.args.get('order', 'desc')
     filter_tld = request.args.get('tld', '')
     min_score = request.args.get('min_score', '')
@@ -126,14 +126,14 @@ def domains():
     total_count = cursor.fetchone()[0]
     
     # Sortierung
-    valid_columns = ['domain_name', 'tld', 'found_at', 'valuation_score', 
-                     'estimated_sell_price', 'current_price', 'age_days']
+    valid_columns = ['domain_name', 'tld', 'first_seen', 'valuation_score', 
+                     'estimated_sell_price', 'price', 'age_years']
     if sort_by in valid_columns:
         query += f' ORDER BY {sort_by}'
         if order.lower() == 'desc':
             query += ' DESC'
     else:
-        query += ' ORDER BY found_at DESC'
+        query += ' ORDER BY first_seen DESC'
     
     # Pagination
     query += ' LIMIT ? OFFSET ?'
@@ -261,14 +261,14 @@ def get_stats():
     cursor.execute('SELECT COUNT(*) FROM domains WHERE valuation_score >= 70')
     high_potential = cursor.fetchone()[0]
     
-    cursor.execute('SELECT COUNT(*) FROM domains WHERE DATE(found_at) = DATE("now")')
+    cursor.execute('SELECT COUNT(*) FROM domains WHERE DATE(first_seen) = DATE("now")')
     new_today = cursor.fetchone()[0]
     
     cursor.execute('''
-        SELECT DATE(found_at) as date, COUNT(*) as count
+        SELECT DATE(first_seen) as date, COUNT(*) as count
         FROM domains
-        WHERE found_at >= DATE("now", "-7 days")
-        GROUP BY DATE(found_at)
+        WHERE first_seen >= DATE("now", "-7 days")
+        GROUP BY DATE(first_seen)
         ORDER BY date
     ''')
     daily_counts = [dict(row) for row in cursor.fetchall()]
@@ -300,7 +300,7 @@ def api_domains():
         query += ' WHERE valuation_score >= ?'
         params.append(int(min_score))
     
-    query += ' ORDER BY found_at DESC LIMIT ? OFFSET ?'
+    query += ' ORDER BY first_seen DESC LIMIT ? OFFSET ?'
     params.extend([limit, offset])
     
     cursor.execute(query, params)
@@ -348,20 +348,20 @@ def get_charts_data():
     
     # Tägliche Entwicklung (letzte 14 Tage)
     cursor.execute('''
-        SELECT DATE(found_at) as date, COUNT(*) as count
+        SELECT DATE(first_seen) as date, COUNT(*) as count
         FROM domains
-        WHERE found_at >= DATE("now", "-14 days")
-        GROUP BY DATE(found_at)
+        WHERE first_seen >= DATE("now", "-14 days")
+        GROUP BY DATE(first_seen)
         ORDER BY date
     ''')
     daily_growth = [{'date': row[0], 'count': row[1]} for row in cursor.fetchall()]
     
     # High-Potential über Zeit
     cursor.execute('''
-        SELECT DATE(found_at) as date, COUNT(*) as count
+        SELECT DATE(first_seen) as date, COUNT(*) as count
         FROM domains
-        WHERE valuation_score >= 70 AND found_at >= DATE("now", "-14 days")
-        GROUP BY DATE(found_at)
+        WHERE valuation_score >= 70 AND first_seen >= DATE("now", "-14 days")
+        GROUP BY DATE(first_seen)
         ORDER BY date
     ''')
     high_potential_over_time = [{'date': row[0], 'count': row[1]} for row in cursor.fetchall()]
@@ -370,17 +370,17 @@ def get_charts_data():
     cursor.execute('''
         SELECT 
             CASE 
-                WHEN current_price < 10 THEN '< $10'
-                WHEN current_price < 50 THEN '$10-49'
-                WHEN current_price < 100 THEN '$50-99'
-                WHEN current_price < 500 THEN '$100-499'
+                WHEN price < 10 THEN '< $10'
+                WHEN price < 50 THEN '$10-49'
+                WHEN price < 100 THEN '$50-99'
+                WHEN price < 500 THEN '$100-499'
                 ELSE '$500+'
             END as price_range,
             COUNT(*) as count
         FROM domains
-        WHERE current_price IS NOT NULL
+        WHERE price IS NOT NULL
         GROUP BY price_range
-        ORDER BY current_price
+        ORDER BY price
     ''')
     price_distribution = [{'range': row[0], 'count': row[1]} for row in cursor.fetchall()]
     
@@ -416,7 +416,7 @@ def export_csv():
         query += ' AND tld = ?'
         params.append(filter_tld)
     
-    query += ' ORDER BY found_at DESC'
+    query += ' ORDER BY first_seen DESC'
     
     cursor.execute(query, params)
     domains = cursor.fetchall()
@@ -427,9 +427,9 @@ def export_csv():
     writer = csv.writer(output)
     
     # Header
-    headers = ['domain_name', 'tld', 'age_days', 'backlinks', 'authority_score', 
-               'current_price', 'auction_status', 'valuation_score', 
-               'estimated_sell_price', 'status', 'found_at']
+    headers = ['domain_name', 'tld', 'age_years', 'backlinks', 'domain_authority', 
+               'price', 'auction_status', 'valuation_score', 
+               'estimated_sell_price', 'status', 'first_seen']
     writer.writerow(headers)
     
     # Daten
@@ -437,15 +437,15 @@ def export_csv():
         writer.writerow([
             domain['domain_name'],
             domain['tld'],
-            domain['age_days'],
+            domain['age_years'],
             domain['backlinks'],
-            domain['authority_score'],
-            domain['current_price'],
+            domain['domain_authority'],
+            domain['price'],
             domain['auction_status'],
             domain['valuation_score'],
             domain['estimated_sell_price'],
             domain['status'],
-            domain['found_at']
+            domain['first_seen']
         ])
     
     output.seek(0)
@@ -480,7 +480,7 @@ def export_json():
         query += ' AND tld = ?'
         params.append(filter_tld)
     
-    query += ' ORDER BY found_at DESC'
+    query += ' ORDER BY first_seen DESC'
     
     cursor.execute(query, params)
     domains = [dict(row) for row in cursor.fetchall()]

@@ -313,7 +313,7 @@
                                 <div class="score-fill high" style="width: {{ domain.valuation_score }}%"></div>
                             </div>
                         </td>
-                        <td>{% if domain.current_price %}${{ "%.2f"|format(domain.current_price) }}{% else %}-{% endif %}</td>
+                        <td>{% if domain.price %}${{ "%.2f"|format(domain.price) }}{% else %}-{% endif %}</td>
                         <td>{% if domain.estimated_sell_price %}${{ "%.2f"|format(domain.estimated_sell_price) }}{% else %}-{% endif %}</td>
                     </tr>
                     {% endfor %}
@@ -341,7 +341,7 @@
                     <tr>
                         <td><a href="/domain/{{ domain.domain_name }}">{{ domain.domain_name }}</a></td>
                         <td>.{{ domain.tld }}</td>
-                        <td>{{ domain.found_at }}</td>
+                        <td>{{ domain.first_seen }}</td>
                         <td>
                             {% if domain.valuation_score %}
                                 {% if domain.valuation_score >= 70 %}

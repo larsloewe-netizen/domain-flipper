@@ -223,10 +223,10 @@
                 <div class="filter-group">
                     <label>Sortierung</label>
                     <select name="sort">
-                        <option value="found_at" {% if current_filters.sort == 'found_at' %}selected{% endif %}>Gefunden am</option>
+                        <option value="first_seen" {% if current_filters.sort == 'first_seen' %}selected{% endif %}>Gefunden am</option>
                         <option value="valuation_score" {% if current_filters.sort == 'valuation_score' %}selected{% endif %}>Bewertung</option>
                         <option value="domain_name" {% if current_filters.sort == 'domain_name' %}selected{% endif %}>Domain</option>
-                        <option value="current_price" {% if current_filters.sort == 'current_price' %}selected{% endif %}>Preis</option>
+                        <option value="price" {% if current_filters.sort == 'price' %}selected{% endif %}>Preis</option>
                         <option value="estimated_sell_price" {% if current_filters.sort == 'estimated_sell_price' %}selected{% endif %}>VK-Preis</option>
                     </select>
                 </div>
@@ -286,11 +286,11 @@
                             <span style="color: #64748b;">-</span>
                             {% endif %}
                         </td>
-                        <td>{% if domain.age_days %}{{ domain.age_days }} Tage{% else %}-{% endif %}</td>
+                        <td>{% if domain.age_years %}{{ domain.age_years }} Tage{% else %}-{% endif %}</td>
                         <td>{% if domain.backlinks %}{{ domain.backlinks }}{% else %}-{% endif %}</td>
-                        <td>{% if domain.current_price %}${{ "%.2f"|format(domain.current_price) }}{% else %}-{% endif %}</td>
+                        <td>{% if domain.price %}${{ "%.2f"|format(domain.price) }}{% else %}-{% endif %}</td>
                         <td>{% if domain.estimated_sell_price %}${{ "%.2f"|format(domain.estimated_sell_price) }}{% else %}-{% endif %}</td>
-                        <td>{{ domain.found_at[:10] if domain.found_at else '-' }}</td>
+                        <td>{{ domain.first_seen[:10] if domain.first_seen else '-' }}</td>
                     </tr>
                     {% endfor %}
                 </tbody>

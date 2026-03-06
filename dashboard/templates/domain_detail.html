@@ -278,7 +278,7 @@
             <div class="domain-header">
                 <div>
                     <div class="domain-title">{{ domain.domain_name }}<span class="domain-tld">.{{ domain.tld }}</span></div>
-                    <p class="subtitle">Gefunden am {{ domain.found_at }}</p>
+                    <p class="subtitle">Gefunden am {{ domain.first_seen }}</p>
                 </div>
                 {% if domain.valuation_score %}
                 <div class="score-badge {% if domain.valuation_score >= 70 %}score-high{% elif domain.valuation_score >= 50 %}score-medium{% else %}score-low{% endif %}">
@@ -297,10 +297,10 @@
         <div class="recommendation">
             <h4>⭐ High-Potential Empfehlung</h4>
             <p>Diese Domain hat eine Bewertung von {{ domain.valuation_score }}/100 und gilt als besonders wertvoll. 
-            {% if domain.estimated_sell_price and domain.current_price %}
-            Bei einem Kaufpreis von ${{ "%.2f"|format(domain.current_price) }} und einem geschätzten VK-Preis von 
+            {% if domain.estimated_sell_price and domain.price %}
+            Bei einem Kaufpreis von ${{ "%.2f"|format(domain.price) }} und einem geschätzten VK-Preis von 
             ${{ "%.2f"|format(domain.estimated_sell_price) }} liegt die potenzielle Marge bei 
-            ${{ "%.2f"|format(domain.estimated_sell_price - domain.current_price) }}.
+            ${{ "%.2f"|format(domain.estimated_sell_price - domain.price) }}.
             {% endif %}</p>
         </div>
         {% endif %}
@@ -331,7 +331,7 @@
                 
                 <div class="metric">
                     <span class="metric-label">Domain-Alter</span>
-                    <span class="metric-value">{% if domain.age_days %}{{ domain.age_days }} Tage{% else %}-{% endif %}</span>
+                    <span class="metric-value">{% if domain.age_years %}{{ domain.age_years }} Tage{% else %}-{% endif %}</span>
                 </div>
                 
                 <div class="metric">
@@ -341,7 +341,7 @@
                 
                 <div class="metric">
                     <span class="metric-label">Authority Score</span>
-                    <span class="metric-value">{% if domain.authority_score %}{{ domain.authority_score }}{% else %}-{% endif %}</span>
+                    <span class="metric-value">{% if domain.domain_authority %}{{ domain.domain_authority }}{% else %}-{% endif %}</span>
                 </div>
                 
                 <div class="metric">
@@ -356,7 +356,7 @@
                 <div class="price-comparison">
                     <div class="price-box current">
                         <h4>Aktueller Preis</h4>
-                        <div class="amount">{% if domain.current_price %}${{ "%.2f"|format(domain.current_price) }}{% else %}-{% endif %}</div>
+                        <div class="amount">{% if domain.price %}${{ "%.2f"|format(domain.price) }}{% else %}-{% endif %}</div>
                     </div>
                     
                     <div class="arrow">→</div>
@@ -367,15 +367,15 @@
                     </div>
                 </div>
                 
-                {% if domain.current_price and domain.estimated_sell_price %}
+                {% if domain.price and domain.estimated_sell_price %}
                 <div class="metric" style="margin-top: 20px;">
                     <span class="metric-label">Potenzieller Gewinn</span>
-                    <span class="metric-value highlight">${{ "%.2f"|format(domain.estimated_sell_price - domain.current_price) }}</span>
+                    <span class="metric-value highlight">${{ "%.2f"|format(domain.estimated_sell_price - domain.price) }}</span>
                 </div>
                 
                 <div class="metric">
                     <span class="metric-label">Rendite</span>
-                    <span class="metric-value highlight">{{ "%.1f"|format((domain.estimated_sell_price - domain.current_price) / domain.current_price * 100) }}%</span>
+                    <span class="metric-value highlight">{{ "%.1f"|format((domain.estimated_sell_price - domain.price) / domain.price * 100) }}%</span>
                 </div>
                 {% endif %}
             </div>
