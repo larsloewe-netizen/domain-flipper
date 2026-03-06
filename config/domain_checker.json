@@ -1,0 +1,47 @@
+{
+  "domain_checker": {
+    "description": "Konfiguration für Domain-Checker Premium-Funktionen",
+    
+    "rate_limits": {
+      "whois_delay": 1.0,
+      "archive_org_delay": 0.5,
+      "batch_delay": 1.0
+    },
+    
+    "apis": {
+      "dynadot": {
+        "enabled": false,
+        "api_key": "",
+        "endpoint": "https://api.dynadot.com/api3.json",
+        "description": "Dynadot API für Auction-Status"
+      },
+      
+      "namecheap": {
+        "enabled": false,
+        "api_key": "",
+        "username": "",
+        "endpoint": "https://api.namecheap.com/xml.response",
+        "description": "Namecheap API für Auction-Status"
+      },
+      
+      "namebio": {
+        "enabled": false,
+        "api_key": "",
+        "endpoint": "https://api.namebio.com/v1",
+        "description": "NameBio API für historische Verkaufsdaten"
+      },
+      
+      "majestic": {
+        "enabled": false,
+        "api_key": "",
+        "endpoint": "https://api.majestic.com/api/json",
+        "description": "Majestic API für Backlink-Daten"
+      }
+    },
+    
+    "check_settings": {
+      "min_archive_snapshots": 5,
+      "expiring_days_threshold": 30
+    }
+  }
+}

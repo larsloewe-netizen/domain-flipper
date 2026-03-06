@@ -1,0 +1,24 @@
+{
+  "priority_tlds": [".com", ".io", ".ai", ".co", ".app", ".dev", ".tech", ".net"],
+  "min_age_years": 1,
+  "max_price_usd": 5000,
+  "min_backlinks": 0,
+  "sources": {
+    "expireddomains": {
+      "enabled": true,
+      "limit": 100
+    },
+    "dynadot": {
+      "enabled": true,
+      "limit": 50
+    },
+    "namecheap": {
+      "enabled": true,
+      "limit": 50
+    },
+    "godaddy": {
+      "enabled": false,
+      "limit": 50
+    }
+  }
+}
