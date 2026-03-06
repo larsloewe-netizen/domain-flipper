@@ -455,6 +455,19 @@ class DomainValuator:
         ))
         
         valuation_id = cursor.lastrowid
+        
+        # 2. Aktualisiere auch die domains Tabelle (für schnelle Abfragen)
+        cursor.execute('''
+            UPDATE domains 
+            SET valuation_score = ?,
+                estimated_sell_price = ?
+            WHERE domain_name = ?
+        ''', (
+            valuation.total_score,
+            valuation.recommended_sale_price,
+            valuation.domain
+        ))
+        
         conn.commit()
         conn.close()
         

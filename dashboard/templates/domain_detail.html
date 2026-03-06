@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ domain.domain_name }} - Domain Details</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+            line-height: 1.6;
+        }
+        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+        header {
+            background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+            padding: 30px;
+            border-radius: 16px;
+            margin-bottom: 30px;
+            border: 1px solid #475569;
+        }
+        h1 { font-size: 2rem; margin-bottom: 10px; }
+        .subtitle { color: #94a3b8; }
+        nav {
+            display: flex;
+            gap: 20px;
+            margin-top: 20px;
+        }
+        nav a {
+            color: #60a5fa;
+            text-decoration: none;
+            padding: 10px 20px;
+            background: rgba(96, 165, 250, 0.1);
+            border-radius: 8px;
+            transition: all 0.2s;
+        }
+        nav a:hover { background: rgba(96, 165, 250, 0.2); }
+        .domain-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            flex-wrap: wrap;
+            gap: 20px;
+        }
+        .domain-title {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: #f8fafc;
+        }
+        .domain-tld {
+            color: #60a5fa;
+        }
+        .score-badge {
+            padding: 15px 30px;
+            border-radius: 12px;
+            font-size: 1.5rem;
+            font-weight: 700;
+            text-align: center;
+        }
+        .score-high { background: rgba(251, 191, 36, 0.2); color: #fbbf24; border: 2px solid rgba(251, 191, 36, 0.3); }
+        .score-medium { background: rgba(96, 165, 250, 0.2); color: #60a5fa; border: 2px solid rgba(96, 165, 250, 0.3); }
+        .score-low { background: rgba(148, 163, 184, 0.2); color: #94a3b8; border: 2px solid rgba(148, 163, 184, 0.3); }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        .card {
+            background: #1e293b;
+            padding: 25px;
+            border-radius: 12px;
+            border: 1px solid #334155;
+        }
+        .card h3 {
+            color: #94a3b8;
+            font-size: 0.875rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .metric {
+            display: flex;
+            justify-content: space-between;
+            padding: 12px 0;
+            border-bottom: 1px solid #334155;
+        }
+        .metric:last-child { border-bottom: none; }
+        .metric-label { color: #94a3b8; }
+        .metric-value {
+            font-weight: 600;
+            color: #f8fafc;
+        }
+        .metric-value.highlight { color: #fbbf24; }
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.875rem;
+            font-weight: 600;
+        }
+        .status-new { background: rgba(34, 197, 94, 0.2); color: #22c55e; }
+        .status-checked { background: rgba(96, 165, 250, 0.2); color: #60a5fa; }
+        .status-error { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+        .action-buttons {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 1rem;
+            transition: all 0.2s;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, #3b82f6, #2563eb);
+            color: white;
+        }
+        .btn-primary:hover { background: linear-gradient(135deg, #2563eb, #1d4ed8); }
+        .btn-success {
+            background: linear-gradient(135deg, #22c55e, #16a34a);
+            color: white;
+        }
+        .btn-success:hover { background: linear-gradient(135deg, #16a34a, #15803d); }
+        .btn-secondary {
+            background: #334155;
+            color: #e2e8f0;
+        }
+        .btn-secondary:hover { background: #475569; }
+        .recommendation {
+            background: linear-gradient(135deg, rgba(251, 191, 36, 0.1), rgba(251, 191, 36, 0.05));
+            border: 1px solid rgba(251, 191, 36, 0.3);
+            border-radius: 12px;
+            padding: 20px;
+            margin-top: 20px;
+        }
+        .recommendation h4 {
+            color: #fbbf24;
+            margin-bottom: 10px;
+        }
+        .recommendation p {
+            color: #e2e8f0;
+        }
+        .chart-bar {
+            width: 100%;
+            height: 20px;
+            background: #334155;
+            border-radius: 10px;
+            overflow: hidden;
+            margin-top: 10px;
+        }
+        .chart-fill {
+            height: 100%;
+            border-radius: 10px;
+            transition: width 0.5s ease;
+        }
+        .chart-fill.excellent { background: linear-gradient(90deg, #22c55e, #16a34a); }
+        .chart-fill.good { background: linear-gradient(90deg, #3b82f6, #2563eb); }
+        .chart-fill.average { background: linear-gradient(90deg, #f59e0b, #d97706); }
+        .chart-fill.poor { background: linear-gradient(90deg, #ef4444, #dc2626); }
+        .price-comparison {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            margin-top: 20px;
+        }
+        .price-box {
+            text-align: center;
+            padding: 20px;
+            background: #0f172a;
+            border-radius: 10px;
+            flex: 1;
+        }
+        .price-box h4 {
+            color: #94a3b8;
+            font-size: 0.875rem;
+            margin-bottom: 10px;
+        }
+        .price-box .amount {
+            font-size: 1.75rem;
+            font-weight: 700;
+        }
+        .price-box.current .amount { color: #60a5fa; }
+        .price-box.sell .amount { color: #22c55e; }
+        .price-box.profit .amount { color: #fbbf24; }
+        .arrow {
+            font-size: 2rem;
+            color: #475569;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="domain-header">
+                <div>
+                    <div class="domain-title">{{ domain.domain_name }}<span class="domain-tld">.{{ domain.tld }}</span></div>
+                    <p class="subtitle">Gefunden am {{ domain.found_at }}</p>
+                </div>
+                {% if domain.valuation_score %}
+                <div class="score-badge {% if domain.valuation_score >= 70 %}score-high{% elif domain.valuation_score >= 50 %}score-medium{% else %}score-low{% endif %}">
+                    <div style="font-size: 0.875rem; opacity: 0.8;">Bewertung</div>
+                    <div>{{ domain.valuation_score }}/100</div>
+                </div>
+                {% endif %}
+            </div>
+            <nav>
+                <a href="/">📊 Dashboard</a>
+                <a href="/domains">📋 Alle Domains</a>
+            </nav>
+        </header>
+
+        {% if domain.valuation_score >= 70 %}
+        <div class="recommendation">
+            <h4>⭐ High-Potential Empfehlung</h4>
+            <p>Diese Domain hat eine Bewertung von {{ domain.valuation_score }}/100 und gilt als besonders wertvoll. 
+            {% if domain.estimated_sell_price and domain.current_price %}
+            Bei einem Kaufpreis von ${{ "%.2f"|format(domain.current_price) }} und einem geschätzten VK-Preis von 
+            ${{ "%.2f"|format(domain.estimated_sell_price) }} liegt die potenzielle Marge bei 
+            ${{ "%.2f"|format(domain.estimated_sell_price - domain.current_price) }}.
+            {% endif %}</p>
+        </div>
+        {% endif %}
+
+        <div class="grid">
+            <div class="card">
+                <h3>📊 Domain-Metriken</h3>
+                
+                <div class="metric">
+                    <span class="metric-label">Status</span>
+                    <span class="metric-value">
+                        {% if domain.status == 'new' %}
+                        <span class="status-badge status-new">Neu</span>
+                        {% elif domain.status == 'checked' %}
+                        <span class="status-badge status-checked">Geprüft</span>
+                        {% elif domain.status == 'error' %}
+                        <span class="status-badge status-error">Fehler</span>
+                        {% else %}
+                        {{ domain.status or 'Unbekannt' }}
+                        {% endif %}
+                    </span>
+                </div>
+                
+                <div class="metric">
+                    <span class="metric-label">TLD</span>
+                    <span class="metric-value">.{{ domain.tld }}</span>
+                </div>
+                
+                <div class="metric">
+                    <span class="metric-label">Domain-Alter</span>
+                    <span class="metric-value">{% if domain.age_days %}{{ domain.age_days }} Tage{% else %}-{% endif %}</span>
+                </div>
+                
+                <div class="metric">
+                    <span class="metric-label">Backlinks</span>
+                    <span class="metric-value">{% if domain.backlinks %}{{ domain.backlinks }}{% else %}-{% endif %}</span>
+                </div>
+                
+                <div class="metric">
+                    <span class="metric-label">Authority Score</span>
+                    <span class="metric-value">{% if domain.authority_score %}{{ domain.authority_score }}{% else %}-{% endif %}</span>
+                </div>
+                
+                <div class="metric">
+                    <span class="metric-label">Auction Status</span>
+                    <span class="metric-value">{{ domain.auction_status or '-' }}</span>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>💰 Preisanalyse</h3>
+                
+                <div class="price-comparison">
+                    <div class="price-box current">
+                        <h4>Aktueller Preis</h4>
+                        <div class="amount">{% if domain.current_price %}${{ "%.2f"|format(domain.current_price) }}{% else %}-{% endif %}</div>
+                    </div>
+                    
+                    <div class="arrow">→</div>
+                    
+                    <div class="price-box sell">
+                        <h4>Empfohlener VK</h4>
+                        <div class="amount">{% if domain.estimated_sell_price %}${{ "%.2f"|format(domain.estimated_sell_price) }}{% else %}-{% endif %}</div>
+                    </div>
+                </div>
+                
+                {% if domain.current_price and domain.estimated_sell_price %}
+                <div class="metric" style="margin-top: 20px;">
+                    <span class="metric-label">Potenzieller Gewinn</span>
+                    <span class="metric-value highlight">${{ "%.2f"|format(domain.estimated_sell_price - domain.current_price) }}</span>
+                </div>
+                
+                <div class="metric">
+                    <span class="metric-label">Rendite</span>
+                    <span class="metric-value highlight">{{ "%.1f"|format((domain.estimated_sell_price - domain.current_price) / domain.current_price * 100) }}%</span>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        {% if domain.valuation_score %}
+        <div class="card">
+            <h3>📈 Bewertungsübersicht</h3>
+            
+            <div style="margin-top: 15px;">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                    <span>Gesamt-Score</span>
+                    <span style="font-weight: 600;">{{ domain.valuation_score }}/100</span>
+                </div>
+                <div class="chart-bar">
+                    <div class="chart-fill {% if domain.valuation_score >= 80 %}excellent{% elif domain.valuation_score >= 60 %}good{% elif domain.valuation_score >= 40 %}average{% else %}poor{% endif %}" 
+                         style="width: {{ domain.valuation_score }}%"></div>
+                </div>
+            </div>
+            
+            <p style="margin-top: 15px; color: #94a3b8;">
+                {% if domain.valuation_score >= 80 %}
+                ⭐ Exzellente Domain mit hohem Verkaufspotenzial.
+                {% elif domain.valuation_score >= 70 %}
+                ✅ Sehr gute Domain, die eine Investition rechtfertigt.
+                {% elif domain.valuation_score >= 50 %}
+                ⚠️ Durchschnittliche Domain – weiter prüfen.
+                {% else %}
+                ❌ Niedriger Score – wahrscheinlich wenig wertvoll.
+                {% endif %}
+            </p>
+        </div>
+        {% endif %}
+
+        <div class="card">
+            <h3>🚀 Aktionen</h3>
+            
+            <div class="action-buttons" style="margin-top: 15px;">
+                <a href="https://www.namecheap.com/domains/registration/results/?domain={{ domain.domain_name }}.{{ domain.tld }}" 
+                   target="_blank" class="btn btn-primary">
+                    🔍 Bei Namecheap prüfen
+                </a>
+                
+                <a href="https://www.godaddy.com/domainsearch/find?domainToCheck={{ domain.domain_name }}.{{ domain.tld }}" 
+                   target="_blank" class="btn btn-primary">
+                    🔍 Bei GoDaddy prüfen
+                </a>
+                
+                {% if domain.valuation_score >= 70 %}
+                <a href="https://www.dynadot.com/domain/search?domain={{ domain.domain_name }}.{{ domain.tld }}" 
+                   target="_blank" class="btn btn-success">
+                    🛒 Kaufen bei Dynadot
+                </a>
+                {% endif %}
+                
+                <a href="/domains" class="btn btn-secondary">← Zurück zur Liste</a>
+            </div>
+            
+            <p style="margin-top: 20px; color: #94a3b8; font-size: 0.875rem;">
+                ℹ️ Die Kauf-Links öffnen externe Registrare. Preise und Verfügbarkeit können abweichen.
+            </p>
+        </div>
+    </div>
+</body>
+</html>

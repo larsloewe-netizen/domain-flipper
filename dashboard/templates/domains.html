@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Domains - Domain Flipper</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+            line-height: 1.6;
+        }
+        .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+        header {
+            background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+            padding: 30px;
+            border-radius: 16px;
+            margin-bottom: 30px;
+            border: 1px solid #475569;
+        }
+        h1 { font-size: 2rem; margin-bottom: 10px; }
+        .subtitle { color: #94a3b8; }
+        nav {
+            display: flex;
+            gap: 20px;
+            margin-top: 20px;
+        }
+        nav a {
+            color: #60a5fa;
+            text-decoration: none;
+            padding: 10px 20px;
+            background: rgba(96, 165, 250, 0.1);
+            border-radius: 8px;
+            transition: all 0.2s;
+        }
+        nav a:hover { background: rgba(96, 165, 250, 0.2); }
+        .filters {
+            background: #1e293b;
+            padding: 20px;
+            border-radius: 12px;
+            border: 1px solid #334155;
+            margin-bottom: 20px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            align-items: end;
+        }
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        .filter-group label {
+            font-size: 0.875rem;
+            color: #94a3b8;
+        }
+        .filter-group input,
+        .filter-group select {
+            padding: 8px 12px;
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 6px;
+            color: #e2e8f0;
+            font-size: 0.875rem;
+        }
+        .filter-group input:focus,
+        .filter-group select:focus {
+            outline: none;
+            border-color: #3b82f6;
+        }
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+        .btn-primary {
+            background: #3b82f6;
+            color: white;
+        }
+        .btn-primary:hover { background: #2563eb; }
+        .btn-secondary {
+            background: #334155;
+            color: #e2e8f0;
+        }
+        .btn-secondary:hover { background: #475569; }
+        .section {
+            background: #1e293b;
+            padding: 20px;
+            border-radius: 12px;
+            border: 1px solid #334155;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.875rem;
+        }
+        th, td {
+            text-align: left;
+            padding: 12px;
+            border-bottom: 1px solid #334155;
+        }
+        th {
+            color: #94a3b8;
+            font-weight: 600;
+            cursor: pointer;
+            user-select: none;
+        }
+        th:hover { color: #e2e8f0; }
+        th .sort-indicator {
+            margin-left: 5px;
+            opacity: 0.5;
+        }
+        th.sorted .sort-indicator { opacity: 1; }
+        tr:hover { background: rgba(255,255,255,0.02); }
+        a { color: #60a5fa; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        .badge {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+        .badge-high { background: rgba(251, 191, 36, 0.2); color: #fbbf24; }
+        .badge-medium { background: rgba(96, 165, 250, 0.2); color: #60a5fa; }
+        .badge-low { background: rgba(148, 163, 184, 0.2); color: #94a3b8; }
+        .pagination {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        .pagination a, .pagination span {
+            padding: 8px 12px;
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 6px;
+            color: #e2e8f0;
+            text-decoration: none;
+        }
+        .pagination a:hover { background: #334155; }
+        .pagination .current {
+            background: #3b82f6;
+            border-color: #3b82f6;
+        }
+        .pagination .disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .score-bar {
+            width: 60px;
+            height: 6px;
+            background: #334155;
+            border-radius: 3px;
+            overflow: hidden;
+            display: inline-block;
+            vertical-align: middle;
+            margin-left: 8px;
+        }
+        .score-fill {
+            height: 100%;
+            border-radius: 3px;
+        }
+        .score-fill.high { background: #22c55e; }
+        .score-fill.medium { background: #f59e0b; }
+        .score-fill.low { background: #ef4444; }
+        .stats-bar {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #0f172a;
+            border-radius: 8px;
+        }
+        .stats-bar span { color: #94a3b8; }
+        .stats-bar strong { color: #e2e8f0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📋 Domain-Übersicht</h1>
+            <p class="subtitle">Alle gefundenen Domains durchsuchen und filtern</p>
+            <nav>
+                <a href="/">📊 Dashboard</a>
+                <a href="/domains">📋 Alle Domains</a>
+            </nav>
+        </header>
+
+        <div class="stats-bar">
+            <span>Gesamt: <strong>{{ total_count }}</strong></span>
+            <span>Seite <strong>{{ page }}</strong> von <strong>{{ total_pages }}</strong></span>
+        </div>
+
+        <div class="filters">
+            <form method="get" style="display: contents;">
+                <div class="filter-group">
+                    <label>Suche</label>
+                    <input type="text" name="search" value="{{ current_filters.search }}" placeholder="Domainname...">
+                </div>
+                
+                <div class="filter-group">
+                    <label>TLD</label>
+                    <select name="tld">
+                        <option value="">Alle</option>
+                        {% for tld in available_tlds %}
+                        <option value="{{ tld }}" {% if current_filters.tld == tld %}selected{% endif %}>.{{ tld }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                
+                <div class="filter-group">
+                    <label>Min. Score</label>
+                    <input type="number" name="min_score" value="{{ current_filters.min_score }}" placeholder="z.B. 70" min="0" max="100">
+                </div>
+                
+                <div class="filter-group">
+                    <label>Sortierung</label>
+                    <select name="sort">
+                        <option value="found_at" {% if current_filters.sort == 'found_at' %}selected{% endif %}>Gefunden am</option>
+                        <option value="valuation_score" {% if current_filters.sort == 'valuation_score' %}selected{% endif %}>Bewertung</option>
+                        <option value="domain_name" {% if current_filters.sort == 'domain_name' %}selected{% endif %}>Domain</option>
+                        <option value="current_price" {% if current_filters.sort == 'current_price' %}selected{% endif %}>Preis</option>
+                        <option value="estimated_sell_price" {% if current_filters.sort == 'estimated_sell_price' %}selected{% endif %}>VK-Preis</option>
+                    </select>
+                </div>
+                
+                <div class="filter-group">
+                    <label>Reihenfolge</label>
+                    <select name="order">
+                        <option value="desc" {% if current_filters.order == 'desc' %}selected{% endif %}>Absteigend</option>
+                        <option value="asc" {% if current_filters.order == 'asc' %}selected{% endif %}>Aufsteigend</option>
+                    </select>
+                </div>
+                
+                <div class="filter-group">
+                    <label>&nbsp;</label>
+                    <button type="submit" class="btn btn-primary">Filtern</button>
+                </div>
+                
+                <div class="filter-group">
+                    <label>&nbsp;</label>
+                    <a href="/domains" class="btn btn-secondary">Zurücksetzen</a>
+                </div>
+            </form>
+        </div>
+
+        <div class="section">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Domain</th>
+                        <th>TLD</th>
+                        <th>Bewertung</th>
+                        <th>Alter</th>
+                        <th>Backlinks</th>
+                        <th>Preis</th>
+                        <th>VK-Preis</th>
+                        <th>Gefunden</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for domain in domains %}
+                    <tr>
+                        <td><a href="/domain/{{ domain.domain_name }}">{{ domain.domain_name }}</a></td>
+                        <td>.{{ domain.tld }}</td>
+                        <td>
+                            {% if domain.valuation_score %}
+                                {% if domain.valuation_score >= 70 %}
+                                <span class="badge badge-high">{{ domain.valuation_score }}</span>
+                                <div class="score-bar"><div class="score-fill high" style="width: {{ domain.valuation_score }}%"></div></div>
+                                {% elif domain.valuation_score >= 50 %}
+                                <span class="badge badge-medium">{{ domain.valuation_score }}</span>
+                                <div class="score-bar"><div class="score-fill medium" style="width: {{ domain.valuation_score }}%"></div></div>
+                                {% else %}
+                                <span class="badge badge-low">{{ domain.valuation_score }}</span>
+                                <div class="score-bar"><div class="score-fill low" style="width: {{ domain.valuation_score }}%"></div></div>
+                                {% endif %}
+                            {% else %}
+                            <span style="color: #64748b;">-</span>
+                            {% endif %}
+                        </td>
+                        <td>{% if domain.age_days %}{{ domain.age_days }} Tage{% else %}-{% endif %}</td>
+                        <td>{% if domain.backlinks %}{{ domain.backlinks }}{% else %}-{% endif %}</td>
+                        <td>{% if domain.current_price %}${{ "%.2f"|format(domain.current_price) }}{% else %}-{% endif %}</td>
+                        <td>{% if domain.estimated_sell_price %}${{ "%.2f"|format(domain.estimated_sell_price) }}{% else %}-{% endif %}</td>
+                        <td>{{ domain.found_at[:10] if domain.found_at else '-' }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+
+            {% if total_pages > 1 %}
+            <div class="pagination">
+                {% if page > 1 %}
+                <a href="?page={{ page - 1 }}{% if current_filters.sort %}&sort={{ current_filters.sort }}{% endif %}{% if current_filters.order %}&order={{ current_filters.order }}{% endif %}{% if current_filters.tld %}&tld={{ current_filters.tld }}{% endif %}{% if current_filters.min_score %}&min_score={{ current_filters.min_score }}{% endif %}{% if current_filters.search %}&search={{ current_filters.search }}{% endif %}">← Zurück</a>
+                {% else %}
+                <span class="disabled">← Zurück</span>
+                {% endif %}
+                
+                {% for p in range(1, total_pages + 1) %}
+                    {% if p == page %}
+                    <span class="current">{{ p }}</span>
+                    {% else %}
+                    <a href="?page={{ p }}{% if current_filters.sort %}&sort={{ current_filters.sort }}{% endif %}{% if current_filters.order %}&order={{ current_filters.order }}{% endif %}{% if current_filters.tld %}&tld={{ current_filters.tld }}{% endif %}{% if current_filters.min_score %}&min_score={{ current_filters.min_score }}{% endif %}{% if current_filters.search %}&search={{ current_filters.search }}{% endif %}">{{ p }}</a>
+                    {% endif %}
+                {% endfor %}
+                
+                {% if page < total_pages %}
+                <a href="?page={{ page + 1 }}{% if current_filters.sort %}&sort={{ current_filters.sort }}{% endif %}{% if current_filters.order %}&order={{ current_filters.order }}{% endif %}{% if current_filters.tld %}&tld={{ current_filters.tld }}{% endif %}{% if current_filters.min_score %}&min_score={{ current_filters.min_score }}{% endif %}{% if current_filters.search %}&search={{ current_filters.search }}{% endif %}">Weiter →</a>
+                {% else %}
+                <span class="disabled">Weiter →</span>
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</body>
+</html>
