@@ -3,6 +3,14 @@
 Domain Scraper für Domain-Flipping Projekt
 Sammelt expired Domains von verschiedenen Quellen
 
+Verbesserungen v2.1 (März 2026):
++ 5 Neue Quellen hinzugefügt:
+  - DropCatch.com API (Drop-Catching Service)
+  - NameJet.com API (Pre-Release Auktionen)
+  - SnapNames.com API (Backorder Service)
+  - Park.io (ccTLD Spezialist: .io, .ai, .ly, .to)
+  - Pool.com API (Drop-Catching Service)
+
 Verbesserungen v2.0:
 - Proxy-Rotation mit Thread-Safety
 - Retry-Logik mit Exponential Backoff
@@ -809,10 +817,735 @@ class DomainScraper:
         self._log_scrape('namecheap.com', len(domains_found), new_count)
         return domains_found
     
+    # ==================== NEW SCRAPER METHODS v2.1 ====================
+    
+    def scrape_dropcatch(self, limit=100):
+        """
+        DropCatch.com API scrapen
+        
+        DropCatch ist ein führender Drop-Catching Service, der expiring Domains
+        direkt beim Registry-Release abfängt und in Auktionen anbietet.
+        
+        API-Info: https://www.dropcatch.com/hiw/dropcatch-api
+        """
+        limit = self._get_test_limit(limit)
+        logger.info(f"Scraping DropCatch.com... (Limit: {limit})")
+        domains_found = []
+        new_count = 0
+        
+        target_tlds = ['.com', '.net', '.org', '.io', '.ai', '.de', '.info', '.biz']
+        
+        try:
+            # DropCatch bietet eine API für expiring domains
+            # Die API erfordert typischerweise einen API-Key
+            api_key = os.getenv('DROPCATCH_API_KEY', '')
+            
+            urls_to_scrape = [
+                "https://www.dropcatch.com/api/v1/auctions",
+                "https://www.dropcatch.com/api/v1/expiring",
+            ]
+            
+            headers = {
+                'Accept': 'application/json',
+                'Authorization': f'Bearer {api_key}' if api_key else '',
+            }
+            
+            for url in urls_to_scrape:
+                try:
+                    logger.info(f"DropCatch: Scraping {url}")
+                    response = self.retry_session.get(url, headers=headers)
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        auctions = data.get('auctions', []) or data.get('domains', [])
+                        
+                        for auction in auctions[:limit]:
+                            try:
+                                raw_domain = auction.get('domain', auction.get('name', ''))
+                                if not raw_domain:
+                                    continue
+                                
+                                domain_name = self._clean_domain(raw_domain)
+                                if not domain_name:
+                                    continue
+                                
+                                tld = self._extract_tld(domain_name)
+                                if tld not in target_tlds:
+                                    continue
+                                
+                                domain_data = {
+                                    'domain_name': domain_name,
+                                    'tld': tld,
+                                    'source': 'dropcatch.com',
+                                    'auction_status': auction.get('status', 'auction'),
+                                    'price': str(auction.get('currentBid', auction.get('price', ''))),
+                                    'auction_url': f"https://www.dropcatch.com/domain/{domain_name}",
+                                    'backlinks': auction.get('backlinks'),
+                                    'domain_authority': auction.get('domainAuthority'),
+                                    'expiry_date': auction.get('dropDate'),
+                                }
+                                
+                                domains_found.append(domain_data)
+                                if self._save_domain(domain_data):
+                                    new_count += 1
+                                    
+                            except Exception as e:
+                                logger.debug(f"Fehler beim Parsen einer DropCatch Domain: {e}")
+                                continue
+                                
+                except requests.exceptions.HTTPError as e:
+                    if e.response.status_code == 401:
+                        logger.warning("DropCatch API: Authentifizierung erforderlich. API-Key in Umgebungsvariable DROPCATCH_API_KEY setzen.")
+                    else:
+                        logger.warning(f"DropCatch API HTTP Error: {e}")
+                except Exception as e:
+                    logger.warning(f"DropCatch API Error für {url}: {e}")
+                    continue
+            
+            # Fallback: HTML Scraping wenn API nicht verfügbar
+            if not domains_found:
+                logger.info("DropCatch: Versuche HTML Scraping als Fallback...")
+                html_urls = [
+                    "https://www.dropcatch.com/",
+                    "https://www.dropcatch.com/auctions",
+                ]
+                
+                for url in html_urls:
+                    try:
+                        response = self.retry_session.get(url)
+                        soup = BeautifulSoup(response.text, 'html.parser')
+                        
+                        # Suche nach Domain-Elementen
+                        domain_elements = soup.find_all('div', class_=['auction-item', 'domain-item', 'listing'])
+                        
+                        for elem in domain_elements[:limit]:
+                            try:
+                                domain_link = elem.find('a', href=re.compile(r'/domain/'))
+                                if not domain_link:
+                                    continue
+                                
+                                raw_domain = domain_link.text.strip()
+                                domain_name = self._clean_domain(raw_domain)
+                                if not domain_name:
+                                    continue
+                                
+                                tld = self._extract_tld(domain_name)
+                                if tld not in target_tlds:
+                                    continue
+                                
+                                price_elem = elem.find('span', class_=['bid', 'price'])
+                                price = price_elem.text.strip() if price_elem else None
+                                
+                                domain_data = {
+                                    'domain_name': domain_name,
+                                    'tld': tld,
+                                    'source': 'dropcatch.com',
+                                    'auction_status': 'auction',
+                                    'price': price,
+                                    'auction_url': f"https://www.dropcatch.com/domain/{domain_name}"
+                                }
+                                
+                                domains_found.append(domain_data)
+                                if self._save_domain(domain_data):
+                                    new_count += 1
+                                    
+                            except Exception as e:
+                                logger.debug(f"Fehler beim HTML Parsen: {e}")
+                                continue
+                                
+                    except Exception as e:
+                        logger.warning(f"DropCatch HTML Scraping Error: {e}")
+                        continue
+            
+            logger.info(f"DropCatch: {len(domains_found)} Domains gefunden")
+            
+        except Exception as e:
+            logger.error(f"Fehler beim DropCatch Scraping: {e}")
+        
+        self._log_scrape('dropcatch.com', len(domains_found), new_count)
+        return domains_found
+    
+    def scrape_namejet(self, limit=100):
+        """
+        NameJet.com API scrapen
+        
+        NameJet bietet Pre-Release Auktionen für expiring Domains von Partner-Registrarn
+        wie Network Solutions, Register.com und eNom.
+        
+        CSV Download: https://www.namejet.com/download.action?format=csv
+        """
+        limit = self._get_test_limit(limit)
+        logger.info(f"Scraping NameJet.com... (Limit: {limit})")
+        domains_found = []
+        new_count = 0
+        
+        target_tlds = ['.com', '.net', '.org', '.io', '.ai', '.de', '.info', '.biz', '.tv', '.cc']
+        
+        try:
+            # NameJet bietet einen CSV Download für alle verfügbaren Domains
+            csv_url = "https://www.namejet.com/download.action?format=csv"
+            
+            try:
+                logger.info("NameJet: Lade CSV-Daten...")
+                response = self.retry_session.get(csv_url)
+                
+                if response.status_code == 200:
+                    import csv
+                    import io
+                    
+                    content = response.content.decode('utf-8', errors='ignore')
+                    csv_reader = csv.DictReader(io.StringIO(content))
+                    
+                    for row in list(csv_reader)[:limit]:
+                        try:
+                            raw_domain = row.get('Domain', row.get('domain', row.get('DOMAIN', '')))
+                            if not raw_domain:
+                                continue
+                            
+                            domain_name = self._clean_domain(raw_domain)
+                            if not domain_name:
+                                continue
+                            
+                            tld = self._extract_tld(domain_name)
+                            if tld not in target_tlds:
+                                continue
+                            
+                            # Parse Preis
+                            price = row.get('Price', row.get('price', row.get('Minimum Bid', '')))
+                            
+                            # Parse Auktionsstatus
+                            status = row.get('Status', 'available_soon').lower()
+                            if 'auction' in status:
+                                auction_status = 'in_auction'
+                            elif 'pending' in status:
+                                auction_status = 'pending_delete'
+                            else:
+                                auction_status = 'available_soon'
+                            
+                            domain_data = {
+                                'domain_name': domain_name,
+                                'tld': tld,
+                                'source': 'namejet.com',
+                                'auction_status': auction_status,
+                                'price': str(price) if price else None,
+                                'auction_url': f"https://www.namejet.com/domain/{domain_name}",
+                                'expiry_date': row.get('Drop Date', row.get('Date', '')),
+                                'backlinks': int(row.get('Backlinks', 0)) if row.get('Backlinks') else None,
+                            }
+                            
+                            domains_found.append(domain_data)
+                            if self._save_domain(domain_data):
+                                new_count += 1
+                                
+                        except Exception as e:
+                            logger.debug(f"Fehler beim Parsen einer CSV-Zeile: {e}")
+                            continue
+                            
+            except Exception as e:
+                logger.warning(f"NameJet CSV Download fehlgeschlagen: {e}")
+            
+            # Fallback: HTML Scraping von der Auktionsseite
+            if not domains_found:
+                logger.info("NameJet: Versuche HTML Scraping als Fallback...")
+                
+                html_urls = [
+                    "https://www.namejet.com/",
+                    "https://www.namejet.com/Pages/BackorderDomains.aspx",
+                ]
+                
+                for url in html_urls:
+                    try:
+                        response = self.retry_session.get(url)
+                        soup = BeautifulSoup(response.text, 'html.parser')
+                        
+                        # Suche nach Domain-Tabellen
+                        tables = soup.find_all('table', {'class': ['auction-table', 'domain-table']})
+                        
+                        for table in tables:
+                            rows = table.find_all('tr')[1:]  # Überspringe Header
+                            
+                            for row in rows[:limit]:
+                                try:
+                                    cells = row.find_all('td')
+                                    if len(cells) < 2:
+                                        continue
+                                    
+                                    domain_cell = cells[0].find('a')
+                                    if not domain_cell:
+                                        continue
+                                    
+                                    raw_domain = domain_cell.text.strip()
+                                    domain_name = self._clean_domain(raw_domain)
+                                    if not domain_name:
+                                        continue
+                                    
+                                    tld = self._extract_tld(domain_name)
+                                    if tld not in target_tlds:
+                                        continue
+                                    
+                                    price = cells[1].text.strip() if len(cells) > 1 else None
+                                    
+                                    domain_data = {
+                                        'domain_name': domain_name,
+                                        'tld': tld,
+                                        'source': 'namejet.com',
+                                        'auction_status': 'auction',
+                                        'price': price,
+                                        'auction_url': f"https://www.namejet.com/domain/{domain_name}"
+                                    }
+                                    
+                                    domains_found.append(domain_data)
+                                    if self._save_domain(domain_data):
+                                        new_count += 1
+                                        
+                                except Exception as e:
+                                    logger.debug(f"Fehler beim HTML Parsen: {e}")
+                                    continue
+                                    
+                    except Exception as e:
+                        logger.warning(f"NameJet HTML Scraping Error: {e}")
+                        continue
+            
+            logger.info(f"NameJet: {len(domains_found)} Domains gefunden")
+            
+        except Exception as e:
+            logger.error(f"Fehler beim NameJet Scraping: {e}")
+        
+        self._log_scrape('namejet.com', len(domains_found), new_count)
+        return domains_found
+    
+    def scrape_snapnames(self, limit=100):
+        """
+        SnapNames.com API scrapen
+        
+        SnapNames (jetzt Teil von NameJet/Web.com) bietet Backorder-Services
+        für Pending Delete und Expiring Domains.
+        
+        Hinweis: SnapNames und NameJet teilen sich nun die gleiche Plattform
+        """
+        limit = self._get_test_limit(limit)
+        logger.info(f"Scraping SnapNames.com... (Limit: {limit})")
+        domains_found = []
+        new_count = 0
+        
+        target_tlds = ['.com', '.net', '.org', '.io', '.ai', '.de', '.info', '.biz']
+        
+        try:
+            # SnapNames bietet ebenfalls einen CSV Download
+            csv_urls = [
+                "https://www.snapnames.com/download.action?format=csv",
+                "https://www.snapnames.com/domainListing.csv",
+            ]
+            
+            for csv_url in csv_urls:
+                try:
+                    logger.info(f"SnapNames: Lade CSV von {csv_url}...")
+                    response = self.retry_session.get(csv_url)
+                    
+                    if response.status_code == 200:
+                        import csv
+                        import io
+                        
+                        content = response.content.decode('utf-8', errors='ignore')
+                        csv_reader = csv.DictReader(io.StringIO(content))
+                        
+                        for row in list(csv_reader)[:limit]:
+                            try:
+                                raw_domain = row.get('Domain', row.get('domain', row.get('Name', '')))
+                                if not raw_domain:
+                                    continue
+                                
+                                domain_name = self._clean_domain(raw_domain)
+                                if not domain_name:
+                                    continue
+                                
+                                tld = self._extract_tld(domain_name)
+                                if tld not in target_tlds:
+                                    continue
+                                
+                                status = row.get('Status', 'backorder').lower()
+                                if 'auction' in status:
+                                    auction_status = 'in_auction'
+                                else:
+                                    auction_status = 'backorder'
+                                
+                                domain_data = {
+                                    'domain_name': domain_name,
+                                    'tld': tld,
+                                    'source': 'snapnames.com',
+                                    'auction_status': auction_status,
+                                    'price': str(row.get('Price', row.get('Minimum Bid', ''))) if row.get('Price') else None,
+                                    'auction_url': f"https://www.snapnames.com/domain/{domain_name}",
+                                    'expiry_date': row.get('Drop Date', ''),
+                                }
+                                
+                                domains_found.append(domain_data)
+                                if self._save_domain(domain_data):
+                                    new_count += 1
+                                    
+                            except Exception as e:
+                                logger.debug(f"Fehler beim CSV Parsen: {e}")
+                                continue
+                        
+                        # Wenn CSV erfolgreich, breche Schleife ab
+                        if domains_found:
+                            break
+                            
+                except Exception as e:
+                    logger.warning(f"SnapNames CSV Download fehlgeschlagen: {e}")
+                    continue
+            
+            # Fallback: HTML Scraping
+            if not domains_found:
+                logger.info("SnapNames: Versuche HTML Scraping als Fallback...")
+                
+                try:
+                    url = "https://www.snapnames.com/"
+                    response = self.retry_session.get(url)
+                    soup = BeautifulSoup(response.text, 'html.parser')
+                    
+                    # Suche nach Domain-Elementen
+                    domain_items = soup.find_all('tr', class_=['domain-row', 'listing-row'])
+                    
+                    for item in domain_items[:limit]:
+                        try:
+                            cells = item.find_all('td')
+                            if len(cells) < 2:
+                                continue
+                            
+                            domain_link = cells[0].find('a')
+                            if not domain_link:
+                                continue
+                            
+                            raw_domain = domain_link.text.strip()
+                            domain_name = self._clean_domain(raw_domain)
+                            if not domain_name:
+                                continue
+                            
+                            tld = self._extract_tld(domain_name)
+                            if tld not in target_tlds:
+                                continue
+                            
+                            price = cells[1].text.strip() if len(cells) > 1 else None
+                            
+                            domain_data = {
+                                'domain_name': domain_name,
+                                'tld': tld,
+                                'source': 'snapnames.com',
+                                'auction_status': 'backorder',
+                                'price': price,
+                                'auction_url': f"https://www.snapnames.com/domain/{domain_name}"
+                            }
+                            
+                            domains_found.append(domain_data)
+                            if self._save_domain(domain_data):
+                                new_count += 1
+                                
+                        except Exception as e:
+                            logger.debug(f"Fehler beim HTML Parsen: {e}")
+                            continue
+                            
+                except Exception as e:
+                    logger.warning(f"SnapNames HTML Scraping Error: {e}")
+            
+            logger.info(f"SnapNames: {len(domains_found)} Domains gefunden")
+            
+        except Exception as e:
+            logger.error(f"Fehler beim SnapNames Scraping: {e}")
+        
+        self._log_scrape('snapnames.com', len(domains_found), new_count)
+        return domains_found
+    
+    def scrape_parkio(self, limit=100):
+        """
+        Park.io API scrapen
+        
+        Park.io ist spezialisiert auf kurze, wertvolle ccTLDs wie:
+        - .io (British Indian Ocean Territory - beliebt bei Tech-Startups)
+        - .ly (Libya - beliebt für Domain-Hacks)
+        - .to (Tonga)
+        - .ai (Anguilla - beliebt für AI-Startups)
+        - .me (Montenegro)
+        
+        API-Doku: http://blog.park.io/articles/park-io-api
+        JSON Endpoints:
+        - https://park.io/domains.json (alle TLDs)
+        - https://park.io/domains/index/io.json (nur .io)
+        - https://park.io/auctions.json (Auktionen)
+        """
+        limit = self._get_test_limit(limit)
+        logger.info(f"Scraping Park.io... (Limit: {limit})")
+        domains_found = []
+        new_count = 0
+        
+        target_tlds = ['.io', '.ly', '.to', '.ai', '.me', '.sh', '.ac', '.gg']
+        
+        try:
+            # Park.io bietet eine einfache JSON API
+            json_urls = [
+                "https://park.io/domains.json",  # Alle dropping Domains
+                "https://park.io/auctions.json",  # Aktive Auktionen
+            ]
+            
+            # Spezifische TLD-URLs
+            tld_urls = [
+                "https://park.io/domains/index/io.json",
+                "https://park.io/domains/index/ly.json",
+                "https://park.io/domains/index/ai.json",
+                "https://park.io/domains/index/to.json",
+                "https://park.io/domains/index/me.json",
+            ]
+            
+            all_urls = json_urls + tld_urls
+            
+            for url in all_urls:
+                try:
+                    logger.info(f"Park.io: Lade {url}...")
+                    response = self.retry_session.get(url)
+                    response.raise_for_status()
+                    
+                    data = response.json()
+                    
+                    if not data.get('success', True):
+                        logger.warning(f"Park.io API Error: {data.get('message', 'Unknown error')}")
+                        continue
+                    
+                    domains_list = data.get('domains', [])
+                    
+                    for domain_info in domains_list[:limit]:
+                        try:
+                            raw_domain = domain_info.get('name', '')
+                            if not raw_domain:
+                                continue
+                            
+                            domain_name = self._clean_domain(raw_domain)
+                            if not domain_name:
+                                continue
+                            
+                            tld = self._extract_tld(domain_name)
+                            if tld not in target_tlds:
+                                continue
+                            
+                            # Parse Verfügbarkeitsdatum
+                            date_available = domain_info.get('date_available', '')
+                            
+                            # Bestimme Status (Auktion vs. Pending)
+                            is_auction = 'auctions' in url
+                            
+                            domain_data = {
+                                'domain_name': domain_name,
+                                'tld': tld,
+                                'source': 'park.io',
+                                'auction_status': 'in_auction' if is_auction else 'pending_delete',
+                                'auction_url': f"https://park.io/domain/{domain_name}",
+                                'expiry_date': date_available,
+                                'estimated_traffic': domain_info.get('traffic'),
+                                'price': str(domain_info.get('current_bid', domain_info.get('price', ''))) if is_auction else None,
+                            }
+                            
+                            domains_found.append(domain_data)
+                            if self._save_domain(domain_data):
+                                new_count += 1
+                                
+                        except Exception as e:
+                            logger.debug(f"Fehler beim Parsen einer Park.io Domain: {e}")
+                            continue
+                    
+                    logger.info(f"Park.io: {len(domains_list)} Einträge von {url} geladen")
+                    
+                except requests.exceptions.HTTPError as e:
+                    if e.response.status_code == 429:
+                        logger.warning("Park.io Rate Limit erreicht. Warte länger...")
+                        time.sleep(30)
+                    else:
+                        logger.warning(f"Park.io HTTP Error: {e}")
+                except Exception as e:
+                    logger.warning(f"Park.io Error für {url}: {e}")
+                    continue
+            
+            # Entferne Duplikate
+            seen_domains = set()
+            unique_domains = []
+            for d in domains_found:
+                key = (d['domain_name'], d['source'])
+                if key not in seen_domains:
+                    seen_domains.add(key)
+                    unique_domains.append(d)
+            
+            domains_found = unique_domains
+            logger.info(f"Park.io: {len(domains_found)} einzigartige Domains gefunden")
+            
+        except Exception as e:
+            logger.error(f"Fehler beim Park.io Scraping: {e}")
+        
+        self._log_scrape('park.io', len(domains_found), new_count)
+        return domains_found
+    
+    def scrape_pool(self, limit=100):
+        """
+        Pool.com API scrapen
+        
+        Pool.com ist einer der ältesten Drop-Catching Services und spezialisiert
+        auf das Abfangen von Domains direkt beim Löschen aus dem Registry.
+        
+        Features:
+        - Backorder-Service für Pending Delete Domains
+        - Unterstützung für viele TLDs
+        - Nur Bezahlung bei erfolgreichem Catch
+        """
+        limit = self._get_test_limit(limit)
+        logger.info(f"Scraping Pool.com... (Limit: {limit})")
+        domains_found = []
+        new_count = 0
+        
+        target_tlds = ['.com', '.net', '.org', '.io', '.ai', '.de', '.info', '.biz', '.us', '.ca']
+        
+        try:
+            # Pool.com bietet Listen von Pending Delete Domains
+            urls_to_scrape = [
+                "https://www.pool.com/domainlisting.aspx",
+                "https://www.pool.com/dropping.aspx",
+            ]
+            
+            for url in urls_to_scrape:
+                try:
+                    logger.info(f"Pool.com: Scraping {url}...")
+                    response = self.retry_session.get(url)
+                    soup = BeautifulSoup(response.text, 'html.parser')
+                    
+                    # Suche nach Domain-Tabellen
+                    tables = soup.find_all('table', {'class': ['domainTable', 'listing-table', 'dataTable']})
+                    
+                    for table in tables:
+                        rows = table.find_all('tr')[1:]  # Überspringe Header
+                        
+                        for row in rows[:limit]:
+                            try:
+                                cells = row.find_all('td')
+                                if len(cells) < 2:
+                                    continue
+                                
+                                # Extrahiere Domain-Name
+                                domain_cell = cells[0].find('a') or cells[0]
+                                raw_domain = domain_cell.text.strip()
+                                
+                                domain_name = self._clean_domain(raw_domain)
+                                if not domain_name:
+                                    continue
+                                
+                                tld = self._extract_tld(domain_name)
+                                if tld not in target_tlds:
+                                    continue
+                                
+                                # Extrahiere Drop-Datum
+                                expiry_date = ''
+                                if len(cells) > 1:
+                                    date_text = cells[1].text.strip()
+                                    # Versuche Datum zu parsen
+                                    try:
+                                        # Verschiedene Datumsformate
+                                        for fmt in ['%Y-%m-%d', '%m/%d/%Y', '%d/%m/%Y', '%b %d, %Y']:
+                                            try:
+                                                parsed_date = datetime.strptime(date_text, fmt)
+                                                expiry_date = parsed_date.isoformat()
+                                                break
+                                            except:
+                                                continue
+                                    except:
+                                        pass
+                                
+                                # Extrahiere Backorder-Count (wenn verfügbar)
+                                backorder_count = None
+                                if len(cells) > 2:
+                                    count_text = cells[2].text.strip()
+                                    match = re.search(r'(\d+)', count_text)
+                                    if match:
+                                        backorder_count = int(match.group(1))
+                                
+                                domain_data = {
+                                    'domain_name': domain_name,
+                                    'tld': tld,
+                                    'source': 'pool.com',
+                                    'auction_status': 'pending_delete',
+                                    'auction_url': f"https://www.pool.com/details.aspx?item={domain_name}",
+                                    'expiry_date': expiry_date,
+                                    'backlinks': backorder_count,  # Wiederverwendung als Proxy für Interesse
+                                }
+                                
+                                domains_found.append(domain_data)
+                                if self._save_domain(domain_data):
+                                    new_count += 1
+                                    
+                            except Exception as e:
+                                logger.debug(f"Fehler beim Parsen einer Pool.com Zeile: {e}")
+                                continue
+                                
+                except Exception as e:
+                    logger.warning(f"Pool.com Scraping Error für {url}: {e}")
+                    continue
+            
+            # Fallback: Suche nach JSON-API oder alternativen Datenquellen
+            if not domains_found:
+                logger.info("Pool.com: Versuche alternative Datenquellen...")
+                
+                try:
+                    # Versuche die API-Endpunkte
+                    api_urls = [
+                        "https://www.pool.com/api/domains",
+                        "https://www.pool.com/services/domains.asmx/GetDroppingDomains",
+                    ]
+                    
+                    for api_url in api_urls:
+                        try:
+                            response = self.retry_session.get(api_url, timeout=5)
+                            if response.status_code == 200:
+                                data = response.json()
+                                domains_list = data.get('domains', [])
+                                
+                                for domain_info in domains_list[:limit]:
+                                    raw_domain = domain_info.get('domain', '')
+                                    if not raw_domain:
+                                        continue
+                                    
+                                    domain_name = self._clean_domain(raw_domain)
+                                    if not domain_name:
+                                        continue
+                                    
+                                    tld = self._extract_tld(domain_name)
+                                    if tld not in target_tlds:
+                                        continue
+                                    
+                                    domain_data = {
+                                        'domain_name': domain_name,
+                                        'tld': tld,
+                                        'source': 'pool.com',
+                                        'auction_status': 'pending_delete',
+                                        'expiry_date': domain_info.get('dropDate', ''),
+                                    }
+                                    
+                                    domains_found.append(domain_data)
+                                    if self._save_domain(domain_data):
+                                        new_count += 1
+                                        
+                        except Exception as e:
+                            logger.debug(f"Pool.com API Error: {e}")
+                            continue
+                            
+                except Exception as e:
+                    logger.debug(f"Pool.com Alternative Scraping Error: {e}")
+            
+            logger.info(f"Pool.com: {len(domains_found)} Domains gefunden")
+            
+        except Exception as e:
+            logger.error(f"Fehler beim Pool.com Scraping: {e}")
+        
+        self._log_scrape('pool.com', len(domains_found), new_count)
+        return domains_found
+    
     # ==================== PARALLEL SCRAPING ====================
     
     def run_all_scrapers_parallel(self):
-        """Alle Scraper parallel ausführen"""
+        """Alle Scraper parallel ausführen (inkl. neuen Quellen v2.1)"""
         logger.info("=" * 60)
         logger.info("Starte paralleles Domain-Scraping...")
         logger.info(f"Zeit: {datetime.now().isoformat()}")
@@ -820,12 +1553,19 @@ class DomainScraper:
         logger.info(f"Max Workers: {self.max_workers}")
         logger.info("=" * 60)
         
-        # Definiere alle Scraper
+        # Alle Scraper definieren (v2.1 - mit 5 neuen Quellen)
         scrapers = [
+            # Bestehende Quellen
             ('expireddomains.net', self.scrape_expired_domains_net, 200),
             ('dynadot.com', self.scrape_dynadot, 50),
             ('godaddy.com', self.scrape_godaddy, 50),
             ('namecheap.com', self.scrape_namecheap, 50),
+            # Neue Quellen v2.1
+            ('dropcatch.com', self.scrape_dropcatch, 100),
+            ('namejet.com', self.scrape_namejet, 100),
+            ('snapnames.com', self.scrape_snapnames, 100),
+            ('park.io', self.scrape_parkio, 100),
+            ('pool.com', self.scrape_pool, 100),
         ]
         
         results = {}
@@ -852,9 +1592,12 @@ class DomainScraper:
         
         logger.info("=" * 60)
         logger.info("Paralleles Scraping abgeschlossen!")
-        for source, count in results.items():
-            logger.info(f"  {source}: {count} Domains")
         logger.info(f"Gesamt: {total_domains} Domains verarbeitet")
+        logger.info("-" * 60)
+        logger.info("Ergebnisse nach Quelle:")
+        for source, count in sorted(results.items()):
+            status_icon = "✓" if count > 0 else "○"
+            logger.info(f"  {status_icon} {source}: {count} Domains")
         logger.info("=" * 60)
         
         return total_domains
@@ -867,7 +1610,7 @@ class DomainScraper:
             return self.run_all_scrapers_sequential()
     
     def run_all_scrapers_sequential(self):
-        """Alle Scraper sequentiell ausführen (Legacy)"""
+        """Alle Scraper sequentiell ausführen (inkl. neuen Quellen v2.1)"""
         logger.info("=" * 60)
         logger.info("Starte sequenzielles Domain-Scraping...")
         logger.info(f"Zeit: {datetime.now().isoformat()}")
@@ -876,6 +1619,7 @@ class DomainScraper:
         
         total_domains = 0
         
+        # Bestehende Quellen
         try:
             domains = self.scrape_expired_domains_net(limit=200)
             total_domains += len(domains)
@@ -899,6 +1643,37 @@ class DomainScraper:
             total_domains += len(domains)
         except Exception as e:
             logger.error(f"Namecheap scraper failed: {e}")
+        
+        # Neue Quellen v2.1
+        try:
+            domains = self.scrape_dropcatch(limit=100)
+            total_domains += len(domains)
+        except Exception as e:
+            logger.error(f"DropCatch scraper failed: {e}")
+        
+        try:
+            domains = self.scrape_namejet(limit=100)
+            total_domains += len(domains)
+        except Exception as e:
+            logger.error(f"NameJet scraper failed: {e}")
+        
+        try:
+            domains = self.scrape_snapnames(limit=100)
+            total_domains += len(domains)
+        except Exception as e:
+            logger.error(f"SnapNames scraper failed: {e}")
+        
+        try:
+            domains = self.scrape_parkio(limit=100)
+            total_domains += len(domains)
+        except Exception as e:
+            logger.error(f"Park.io scraper failed: {e}")
+        
+        try:
+            domains = self.scrape_pool(limit=100)
+            total_domains += len(domains)
+        except Exception as e:
+            logger.error(f"Pool.com scraper failed: {e}")
         
         logger.info("=" * 60)
         logger.info(f"Scraping abgeschlossen!")

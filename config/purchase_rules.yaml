@@ -1,0 +1,102 @@
+# Kauf-Regeln für das Auto-Purchasing System
+# ⚠️ WICHTIG: Immer zuerst im Sandbox-Modus testen!
+
+# Allgemeine Einstellungen
+sandbox_mode: true  # Auf false setzen für echte Käufe
+enabled: true
+
+# Auto-Kauf Kriterien
+auto_purchase:
+  min_score: 75           # Minimum Domain-Score für Auto-Kauf
+  max_price: 20.00        # Maximum Preis in USD für Auto-Kauf
+  require_manual_approval: false  # Für Domains <= $50
+
+# Limits
+limits:
+  daily:
+    max_domains: 5        # Max 5 Domains pro Tag
+    max_amount_usd: 500   # Max $500 pro Tag
+  weekly:
+    max_domains: 20       # Max 20 Domains pro Woche
+    max_amount_usd: 2000  # Max $2000 pro Woche
+  monthly:
+    max_domains: 50       # Max 50 Domains pro Monat
+    max_amount_usd: 5000  # Max $5000 pro Monat
+
+# Manuelle Freigabe
+manual_approval:
+  enabled: true
+  price_threshold: 50.00  # Ab diesem Preis manuelle Freigabe nötig
+  notification_email: true
+  notification_telegram: true
+
+# TLD Blacklist (problematische TLDs)
+tld_blacklist:
+  - tk      # Tokelau - oft missbraucht
+  - ml      # Mali - oft missbraucht
+  - ga      # Gabun - oft missbraucht
+  - cf      # Zentralafrikanische Republik - oft missbraucht
+  - gq      # Äquatorialguinea - oft missbraucht
+  - xxx     # Adult-Content TLD
+  - adult   # Adult-Content TLD
+  - porn    # Adult-Content TLD
+  - sex     # Adult-Content TLD
+  - su      # Sowjetunion - veraltet, oft problematisch
+
+# TLD Whitelist (nur diese TLDs kaufen - leer = alle erlaubt außer Blacklist)
+tld_whitelist: []
+
+# E-Mail Benachrichtigungen
+notifications:
+  email:
+    enabled: true
+    smtp_host: "smtp.gmail.com"
+    smtp_port: 587
+    smtp_user: ""           # Zu konfigurieren
+    smtp_password: ""       # Zu konfigurieren
+    from_address: "domain-flipper@example.com"
+    to_address: ""          # Zu konfigurieren
+    
+  telegram:
+    enabled: true
+    bot_token: ""           # Zu konfigurieren
+    chat_id: ""             # Zu konfigurieren
+
+# Backup Wallet (für zusätzliche Sicherheit)
+backup_wallet:
+  enabled: true
+  max_amount_per_purchase: 100  # Max $100 pro Kauf vom Backup
+  daily_limit: 200              # Max $200 pro Tag vom Backup
+  notification_on_use: true
+
+# Logging
+logging:
+  log_file: "logs/purchases.log"
+  log_level: "INFO"
+  retention_days: 90
+  
+# API Konfigurationen
+apis:
+  namecheap:
+    enabled: true
+    sandbox: true           # Immer true für Tests!
+    api_user: ""            # Namecheap API Username
+    api_key: ""             # Namecheap API Key
+    username: ""            # Namecheap Username
+    client_ip: ""           # Deine IP-Adresse (für API-Zugriff)
+    
+  dynadot:
+    enabled: true
+    api_key: ""             # Dynadot API Key
+    sandbox: true           # Immer true für Tests!
+
+# Retry Einstellungen
+retry:
+  max_attempts: 3
+  delay_seconds: 5
+  backoff_multiplier: 2
+
+# Safety-Cooldown (Zeit zwischen Käufen)
+cooldown:
+  seconds_between_purchases: 10
+  seconds_after_error: 60

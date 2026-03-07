@@ -13,7 +13,7 @@ from dataclasses import dataclass, asdict
 from typing import List, Dict, Optional, Tuple
 from pathlib import Path
 
-# Konstanten für Bewertung
+# Konstanten für Bewertung (Original-Gewichtung)
 MAX_LENGTH_SCORE = 20
 MAX_TLD_SCORE = 20
 MAX_KEYWORD_SCORE = 20
@@ -21,7 +21,7 @@ MAX_AUTHORITY_SCORE = 20
 MAX_BRANDABILITY_SCORE = 20
 MAX_TOTAL_SCORE = 100
 
-HIGH_POTENTIAL_THRESHOLD = 70
+HIGH_POTENTIAL_THRESHOLD = 65  # Nur Threshold gesenkt
 
 # TLD-Ranking (je höher, desto wertvoller)
 TLD_RANKING = {
@@ -432,7 +432,7 @@ class DomainValuator:
         cursor = conn.cursor()
         
         cursor.execute('''
-            INSERT INTO domain_valuations 
+            INSERT OR REPLACE INTO domain_valuations 
             (domain, length_score, tld_score, keyword_score, authority_score,
              brandability_score, total_score, is_high_potential, recommended_sale_price,
              purchase_price, matched_keywords, backlinks, domain_authority, valuation_date)
