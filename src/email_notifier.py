@@ -140,11 +140,39 @@ Hans-Dieter (Domain Flipper Bot)
     return send_email(subject, body)
 
 
+def generate_purchase_links(domain):
+    """Generiert Direkt-Links zu Domain-Marktplätzen"""
+    domain_clean = domain.strip().lower()
+    name_only = domain_clean.split('.')[0] if '.' in domain_clean else domain_clean
+    
+    links = {
+        'sedo': f"https://www.sedo.com/search/?keyword={name_only}",
+        'dan': f"https://dan.com/buy-domain/{domain_clean}",
+        'afternic': f"https://www.afternic.com/forsale/{domain_clean}",
+        'godaddy': f"https://www.godaddy.com/domainsearch/find?domainToCheck={domain_clean}",
+        'namecheap': f"https://www.namecheap.com/domains/registration/results/?domain={domain_clean}",
+        'expired_domains': f"https://www.expireddomains.net/domain-search/?q={name_only}&searchinit=1",
+    }
+    return links
+
+
 def send_high_potential_alert(domain, score, sell_price, buy_price=None):
     """Sendet Alert bei High-Potential Domain"""
     subject = f"🌟 High Potential Domain gefunden: {domain}"
     
     buy_str = f"{buy_price:.2f} USD" if buy_price else "Nicht bekannt"
+    
+    # Marge nur berechnen wenn beide Preise verfügbar
+    if buy_price and sell_price:
+        margin_pct = (sell_price/buy_price - 1)*100
+        margin_str = f"{margin_pct:.0f}%"
+    else:
+        margin_str = "nicht berechenbar"
+    
+    sell_str = f"${sell_price:.0f}" if sell_price else "nicht verfügbar"
+    
+    # Generiere Kauf-Links
+    links = generate_purchase_links(domain)
     
     body = f"""Hallo Lars,
 
@@ -153,12 +181,19 @@ eine neue Domain mit hohem Potential wurde gefunden!
 🌟 Domain: {domain}
 📊 Score: {score}/100
 💰 Aktueller Kaufpreis: {buy_str}
-💵 Geschätzter Verkaufspreis: ${sell_price:.0f}
-📈 Marge: {(sell_price/buy_price - 1)*100:.0f}% (wenn Kauf erfolgreich)
+💵 Geschätzter Verkaufspreis: {sell_str}
+📈 Marge: {margin_str} (wenn Kauf erfolgreich)
 ⏰ Gefunden: {datetime.now().strftime('%d.%m.%Y %H:%M')}
 
-Diese Domain könnte interessant sein für einen Kauf.
-Prüfe auf: ExpiredDomains.net oder ähnlichen Plattformen.
+🛒 DIREKT KAUFEN:
+• Sedo: {links['sedo']}
+• Dan.com: {links['dan']}
+• Afternic: {links['afternic']}
+• GoDaddy: {links['godaddy']}
+• Namecheap: {links['namecheap']}
+• ExpiredDomains.net: {links['expired_domains']}
+
+Tipp: Bei Dan.com und Sedo oft die besten Schnäppchen!
 
 ---
 Hans-Dieter (Domain Flipper Bot)

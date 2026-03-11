@@ -20,7 +20,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from config.settings import DB_PATH, TOP_N_DOMAINS
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'domain-flipper-dashboard'
+# SECURITY FIX: SECRET_KEY aus Umgebungsvariable laden
+app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY')
+if not app.config['SECRET_KEY']:
+    import secrets
+    app.config['SECRET_KEY'] = secrets.token_hex(32)
+    app.logger.warning("FLASK_SECRET_KEY not set - using random key (sessions won't persist across restarts)")
 
 # Job-Status-Tracking
 job_status = {
@@ -95,14 +100,42 @@ def domains():
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # Query-Parameter
+    # Query-Parameter mit Validierung
+    valid_columns = {'domain_name', 'tld', 'first_seen', 'valuation_score', 
+                     'estimated_sell_price', 'price', 'age_years'}
     sort_by = request.args.get('sort', 'first_seen')
+    # SECURITY FIX: Nur erlaubte Spalten für Sortierung
+    if sort_by not in valid_columns:
+        sort_by = 'first_seen'
+    
     order = request.args.get('order', 'desc')
+    if order.lower() not in ('asc', 'desc'):
+        order = 'desc'
+    
     filter_tld = request.args.get('tld', '')
+    
+    # SECURITY FIX: Eingabevalidierung für min_score
     min_score = request.args.get('min_score', '')
+    if min_score:
+        try:
+            min_score = int(min_score)
+            if not 0 <= min_score <= 100:
+                min_score = ''
+        except ValueError:
+            min_score = ''
+    
     search = request.args.get('search', '')
-    page = int(request.args.get('page', 1))
-    per_page = 50
+    # SECURITY FIX: XSS-Schutz - entferne potenziell gefährliche Zeichen
+    search = re.sub(r'[<>{}{}]', '', search)[:100]  # Max 100 Zeichen
+    
+    # PERFORMANCE FIX: Page-Limitierung
+    try:
+        page = int(request.args.get('page', 1))
+        page = max(1, min(page, 1000))  # Max 1000 Seiten
+    except ValueError:
+        page = 1
+    
+    per_page = min(int(request.args.get('per_page', 50)), 100)  # Max 100 pro Seite
     
     # Basis-Query
     query = 'SELECT * FROM domains WHERE 1=1'
@@ -125,15 +158,10 @@ def domains():
     cursor.execute(count_query, params)
     total_count = cursor.fetchone()[0]
     
-    # Sortierung
-    valid_columns = ['domain_name', 'tld', 'first_seen', 'valuation_score', 
-                     'estimated_sell_price', 'price', 'age_years']
-    if sort_by in valid_columns:
-        query += f' ORDER BY {sort_by}'
-        if order.lower() == 'desc':
-            query += ' DESC'
-    else:
-        query += ' ORDER BY first_seen DESC'
+    # Sortierung - jetzt sicher durch Whitelist-Validierung oben
+    query += f' ORDER BY {sort_by}'
+    if order.lower() == 'desc':
+        query += ' DESC'
     
     # Pagination
     query += ' LIMIT ? OFFSET ?'
@@ -648,8 +676,115 @@ def get_registrar_config():
     })
 
 
+@app.route('/health')
+def health_check():
+    """Health-Check Endpoint für Monitoring (Docker/Kubernetes)."""
+    import shutil
+    
+    health = {
+        'status': 'healthy',
+        'timestamp': datetime.now().isoformat(),
+        'version': '2.1.0',
+        'checks': {}
+    }
+    
+    # Database check
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT COUNT(*) FROM domains')
+        count = cursor.fetchone()[0]
+        conn.close()
+        health['checks']['database'] = {
+            'status': 'ok',
+            'domains_count': count
+        }
+    except Exception as e:
+        health['checks']['database'] = {
+            'status': 'error',
+            'message': str(e)
+        }
+        health['status'] = 'unhealthy'
+    
+    # Disk space check
+    try:
+        disk = shutil.disk_usage('/')
+        free_gb = disk.free / (1024**3)
+        free_percent = (disk.free / disk.total) * 100
+        health['checks']['disk'] = {
+            'status': 'ok' if free_percent > 10 else 'warning',
+            'free_gb': round(free_gb, 2),
+            'free_percent': round(free_percent, 2)
+        }
+        if free_percent < 5:
+            health['status'] = 'unhealthy'
+    except Exception as e:
+        health['checks']['disk'] = {
+            'status': 'error',
+            'message': str(e)
+        }
+    
+    status_code = 200 if health['status'] == 'healthy' else 503
+    return jsonify(health), status_code
+
+
+@app.route('/api/compare')
+def compare_domains():
+    """Vergleicht mehrere Domains miteinander."""
+    domains = request.args.getlist('domain')
+    if len(domains) < 2:
+        return jsonify({'error': 'Mindestens 2 Domains erforderlich'}), 400
+    
+    if len(domains) > 10:
+        return jsonify({'error': 'Maximum 10 Domains erlaubt'}), 400
+    
+    # Sanitize domain names
+    domains = [re.sub(r'[^a-zA-Z0-9.-]', '', d) for d in domains]
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    placeholders = ','.join(['?' for _ in domains])
+    cursor.execute(f'''
+        SELECT * FROM domains 
+        WHERE domain_name IN ({placeholders})
+        ORDER BY valuation_score DESC
+    ''', domains)
+    
+    results = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    
+    # Berechne Vergleichs-Metriken
+    comparison = {
+        'domains': results,
+        'count': len(results),
+        'requested': len(domains)
+    }
+    
+    if len(results) >= 2:
+        scores = [r.get('valuation_score') or 0 for r in results]
+        prices = [r.get('estimated_sell_price') or 0 for r in results]
+        comparison['analysis'] = {
+            'best_score': max(scores),
+            'score_difference': max(scores) - min(scores),
+            'avg_score': round(sum(scores) / len(scores), 2),
+            'best_price': max(prices) if prices else 0,
+        }
+        comparison['winner'] = results[0]
+    
+    return jsonify(comparison)
+
+
 if __name__ == '__main__':
+    # SECURITY FIX: Debug-Modus nur via Umgebungsvariable aktivieren
+    debug_mode = os.getenv('FLASK_DEBUG', 'false').lower() == 'true'
+    port = int(os.getenv('FLASK_PORT', 5000))
+    host = os.getenv('FLASK_HOST', '0.0.0.0')
+    
     print("🚀 Domain Flipper Dashboard")
-    print("📍 http://localhost:5000")
+    print(f"📍 http://{host}:{port}")
+    print(f"🔧 Debug-Modus: {'AN' if debug_mode else 'AUS'}")
+    print(f"📝 Health-Check: http://{host}:{port}/health")
     print("⏹  Ctrl+C zum Beenden")
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    
+    app.run(host=host, port=port, debug=debug_mode)

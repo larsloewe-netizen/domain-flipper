@@ -81,29 +81,29 @@ try:
 except ImportError:
     # Fallback wenn proxy_manager nicht verfügbar
     WORKING_PROXIES_FILE = os.path.join(DATA_DIR, 'working_proxies.json')
-    
+
     class ProxyManager:
         def __init__(self, **kwargs):
             self.working_proxies = []
             self.proxy_list = kwargs.get('proxy_list', [])
-            
+
         def get_proxy(self):
             if self.proxy_list:
                 proxy = random.choice(self.proxy_list)
                 return {'http': proxy, 'https': proxy}
             return None
-            
+
         def mark_failed(self, proxy):
             pass
-    
+
     def get_proxy_manager(**kwargs):
         return ProxyManager(**kwargs)
 
 
 class RateLimiter:
     """Smartes Rate-Limiting mit variablen Delays"""
-    
-    def __init__(self, min_delay: float = 1.0, max_delay: float = 3.0, 
+
+    def __init__(self, min_delay: float = 1.0, max_delay: float = 3.0,
                  error_threshold: int = 5, pause_duration: int = 60):
         self.min_delay = min_delay
         self.max_delay = max_delay
@@ -113,34 +113,34 @@ class RateLimiter:
         self.last_request_time = None
         self.consecutive_errors = 0
         self._lock = Lock()
-    
+
     def wait(self):
         """Warte vor dem nächsten Request"""
         with self._lock:
             delay = random.uniform(self.min_delay, self.max_delay)
-            
+
             if self.consecutive_errors > 3:
                 delay *= 2
                 logger.info(f"Erhöhte Pause wegen Fehlern: {delay:.2f}s")
-            
+
             if self.error_count >= self.error_threshold:
                 logger.warning(f"Zu viele Fehler ({self.error_count}). Pause für {self.pause_duration}s...")
                 time.sleep(self.pause_duration)
                 self.error_count = 0
-            
+
             if self.last_request_time:
                 time_since_last = (datetime.now() - self.last_request_time).total_seconds()
                 if time_since_last < delay:
                     remaining = delay - time_since_last
                     time.sleep(remaining)
-            
+
             self.last_request_time = datetime.now()
-    
+
     def report_success(self):
         """Meldet einen erfolgreichen Request"""
         with self._lock:
             self.consecutive_errors = 0
-    
+
     def report_error(self):
         """Meldet einen fehlgeschlagenen Request"""
         with self._lock:
@@ -150,7 +150,7 @@ class RateLimiter:
 
 class RetrySession:
     """Session mit Retry-Logik und Exponential Backoff"""
-    
+
     def __init__(self, max_retries: int = 3, base_delay: float = 1.0,
                  timeout: int = 10, proxy_manager: Optional[ProxyManager] = None,
                  rate_limiter: Optional[RateLimiter] = None):
@@ -162,21 +162,21 @@ class RetrySession:
         self.session = requests.Session()
         self.robots_parsers = {}
         self._session_lock = Lock()
-        
+
     def _get_backoff_delay(self, attempt: int, status_code: Optional[int] = None) -> float:
         """Berechne Delay mit Exponential Backoff"""
         delay = self.base_delay * (2 ** attempt)
-        
+
         if status_code == 429:
             delay *= 3
             logger.warning("429 Too Many Requests - erhöhe Wartezeit")
         elif status_code == 503:
             delay *= 2
             logger.warning("503 Service Unavailable - erhöhe Wartezeit")
-        
+
         jitter = delay * 0.2 * (2 * random.random() - 1)
         return delay + jitter
-    
+
     def _get_headers(self) -> Dict[str, str]:
         """Generiere Headers mit zufälligem User-Agent"""
         return {
@@ -193,26 +193,26 @@ class RetrySession:
             "Sec-Fetch-User": "?1",
             "Cache-Control": "max-age=0",
         }
-    
+
     def request(self, method: str, url: str, **kwargs) -> requests.Response:
         """Führe Request mit Retry-Logik aus"""
         self.rate_limiter.wait()
-        
+
         last_exception = None
         proxy = None
-        
+
         for attempt in range(self.max_retries):
             try:
                 headers = self._get_headers()
                 if 'headers' in kwargs:
                     headers.update(kwargs.pop('headers'))
-                
+
                 # Proxy wählen (bei jedem Retry ein neuer)
                 if self.proxy_manager:
                     proxy = self.proxy_manager.get_proxy()
-                
+
                 logger.debug(f"Request {attempt + 1}/{self.max_retries}: {url}")
-                
+
                 with self._session_lock:
                     response = self.session.request(
                         method=method,
@@ -222,59 +222,59 @@ class RetrySession:
                         proxies=proxy,
                         **kwargs
                     )
-                
+
                 if response.status_code in [429, 503]:
                     if attempt < self.max_retries - 1:
                         delay = self._get_backoff_delay(attempt, response.status_code)
                         logger.warning(f"Status {response.status_code}, warte {delay:.2f}s...")
                         time.sleep(delay)
                         continue
-                
+
                 response.raise_for_status()
                 self.rate_limiter.report_success()
                 return response
-                
+
             except requests.exceptions.Timeout as e:
                 last_exception = e
                 logger.warning(f"Timeout bei Request zu {url} (Versuch {attempt + 1}/{self.max_retries})")
                 self.rate_limiter.report_error()
-                
+
             except requests.exceptions.ConnectionError as e:
                 last_exception = e
                 logger.warning(f"Connection Error bei {url} (Versuch {attempt + 1}/{self.max_retries})")
                 self.rate_limiter.report_error()
                 if proxy and self.proxy_manager:
                     self.proxy_manager.mark_failed(proxy)
-                
+
             except requests.exceptions.HTTPError as e:
                 last_exception = e
                 status_code = e.response.status_code if e.response else None
                 logger.warning(f"HTTP Error {status_code} bei {url} (Versuch {attempt + 1}/{self.max_retries})")
                 self.rate_limiter.report_error()
-                
+
             except requests.exceptions.RequestException as e:
                 last_exception = e
                 logger.warning(f"Request Error bei {url}: {e} (Versuch {attempt + 1}/{self.max_retries})")
                 self.rate_limiter.report_error()
                 if proxy and self.proxy_manager:
                     self.proxy_manager.mark_failed(proxy)
-            
+
             if attempt < self.max_retries - 1:
                 delay = self._get_backoff_delay(attempt)
                 logger.info(f"Warte {delay:.2f}s vor Retry...")
                 time.sleep(delay)
-        
+
         logger.error(f"Alle {self.max_retries} Versuche für {url} fehlgeschlagen")
         if last_exception:
             raise last_exception
         raise requests.RequestException(f"Max retries exceeded for {url}")
-    
+
     def get(self, url: str, **kwargs) -> requests.Response:
         return self.request('GET', url, **kwargs)
-    
+
     def post(self, url: str, **kwargs) -> requests.Response:
         return self.request('POST', url, **kwargs)
-    
+
     def close(self):
         with self._session_lock:
             self.session.close()
@@ -282,14 +282,14 @@ class RetrySession:
 
 class DomainScraper:
     """Haupt-Scraper Klasse mit parallelem Scraping"""
-    
+
     def __init__(self, use_proxies: bool = False, proxy_list: Optional[List[str]] = None,
                  use_free_proxies: bool = False, test_mode: bool = False,
                  timeout: int = 10, min_delay: float = 1.0, max_delay: float = 3.0,
                  proxy_rotation_limit: int = 10, max_workers: int = 3):
         """
         Initialisiere Domain Scraper
-        
+
         Args:
             use_proxies: Aktiviere Proxy-Support
             proxy_list: Liste von Proxy-URLs
@@ -305,10 +305,10 @@ class DomainScraper:
         self.domains = []
         self.max_workers = max_workers
         self._db_lock = Lock()
-        
+
         os.makedirs(DATA_DIR, exist_ok=True)
         os.makedirs(LOGS_DIR, exist_ok=True)
-        
+
         # Proxy Manager
         proxy_manager = None
         if use_proxies or proxy_list or use_free_proxies:
@@ -324,13 +324,13 @@ class DomainScraper:
                 proxy_manager = ProxyManager(proxy_list=proxy_list)
                 if proxy_list:
                     logger.info(f"{len(proxy_list)} manuelle Proxies konfiguriert")
-            
+
             if proxy_manager and hasattr(proxy_manager, 'working_proxies'):
                 logger.info(f"{len(proxy_manager.working_proxies)} funktionierende Proxies verfügbar")
-        
+
         # Rate Limiter
         rate_limiter = RateLimiter(min_delay=min_delay, max_delay=max_delay)
-        
+
         # Retry Session
         self.retry_session = RetrySession(
             max_retries=3,
@@ -339,14 +339,14 @@ class DomainScraper:
             proxy_manager=proxy_manager,
             rate_limiter=rate_limiter
         )
-        
+
         self._init_db()
-    
+
     def _init_db(self):
         """SQLite Datenbank initialisieren"""
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
-        
+
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS domains (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -367,7 +367,7 @@ class DomainScraper:
                 UNIQUE(domain_name, source)
             )
         ''')
-        
+
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS scrape_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -378,23 +378,32 @@ class DomainScraper:
                 error TEXT
             )
         ''')
-        
+
+        # PERFORMANCE FIX: Datenbank-Indizes für schnellere Queries
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_domains_tld ON domains(tld)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_domains_score ON domains(valuation_score)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_domains_first_seen ON domains(first_seen)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_domains_status ON domains(auction_status)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_domains_name ON domains(domain_name)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_domains_source ON domains(source)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_scrape_log_time ON scrape_log(scrape_time)')
+
         conn.commit()
         conn.close()
-        logger.info("Datenbank initialisiert")
-    
+        logger.info("Datenbank initialisiert (mit Performance-Indizes)")
+
     def _save_domain(self, domain_data):
         """Domain in Datenbank speichern (Thread-Safe)"""
         with self._db_lock:
             conn = sqlite3.connect(DB_PATH)
             cursor = conn.cursor()
-            
+
             now = datetime.now().isoformat()
-            
+
             try:
                 cursor.execute('''
-                    INSERT INTO domains 
-                    (domain_name, tld, age_years, backlinks, estimated_traffic, price, 
+                    INSERT INTO domains
+                    (domain_name, tld, age_years, backlinks, estimated_traffic, price,
                      auction_status, domain_authority, page_authority, source, auction_url,
                      expiry_date, first_seen, last_updated)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -432,6 +441,103 @@ class DomainScraper:
             finally:
                 conn.close()
     
+    def _save_domains_batch(self, domain_data_list: List[Dict], batch_size: int = 100) -> int:
+        """
+        Batch-Insert für bessere Performance.
+        
+        Args:
+            domain_data_list: Liste von Domain-Daten-Dictionaries
+            batch_size: Anzahl der Domains pro Batch
+            
+        Returns:
+            Anzahl der gespeicherten Domains
+        """
+        if not domain_data_list:
+            return 0
+            
+        saved_count = 0
+        now = datetime.now().isoformat()
+        
+        with self._db_lock:
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            
+            try:
+                # Bereite Batch-Daten vor
+                batch = []
+                for domain_data in domain_data_list:
+                    batch.append((
+                        domain_data['domain_name'],
+                        domain_data['tld'],
+                        domain_data.get('age_years'),
+                        domain_data.get('backlinks'),
+                        domain_data.get('estimated_traffic'),
+                        domain_data.get('price'),
+                        domain_data.get('auction_status'),
+                        domain_data.get('domain_authority'),
+                        domain_data.get('page_authority'),
+                        domain_data['source'],
+                        domain_data.get('auction_url'),
+                        domain_data.get('expiry_date'),
+                        now, now
+                    ))
+                    
+                    # Führe Batch-Insert aus wenn Batch voll
+                    if len(batch) >= batch_size:
+                        cursor.executemany('''
+                            INSERT INTO domains 
+                            (domain_name, tld, age_years, backlinks, estimated_traffic, price, 
+                             auction_status, domain_authority, page_authority, source, auction_url,
+                             expiry_date, first_seen, last_updated)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ON CONFLICT(domain_name, source) DO UPDATE SET
+                            age_years=excluded.age_years,
+                            backlinks=excluded.backlinks,
+                            estimated_traffic=excluded.estimated_traffic,
+                            price=excluded.price,
+                            auction_status=excluded.auction_status,
+                            domain_authority=excluded.domain_authority,
+                            page_authority=excluded.page_authority,
+                            auction_url=excluded.auction_url,
+                            expiry_date=excluded.expiry_date,
+                            last_updated=excluded.last_updated
+                        ''', batch)
+                        saved_count += cursor.rowcount
+                        batch = []
+                
+                # Restliche Domains speichern
+                if batch:
+                    cursor.executemany('''
+                        INSERT INTO domains 
+                        (domain_name, tld, age_years, backlinks, estimated_traffic, price, 
+                         auction_status, domain_authority, page_authority, source, auction_url,
+                         expiry_date, first_seen, last_updated)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(domain_name, source) DO UPDATE SET
+                        age_years=excluded.age_years,
+                        backlinks=excluded.backlinks,
+                        estimated_traffic=excluded.estimated_traffic,
+                        price=excluded.price,
+                        auction_status=excluded.auction_status,
+                        domain_authority=excluded.domain_authority,
+                        page_authority=excluded.page_authority,
+                        auction_url=excluded.auction_url,
+                        expiry_date=excluded.expiry_date,
+                        last_updated=excluded.last_updated
+                    ''', batch)
+                    saved_count += cursor.rowcount
+                
+                conn.commit()
+                logger.info(f"Batch-Insert: {saved_count} Domains gespeichert")
+                return saved_count
+                
+            except Exception as e:
+                logger.error(f"Fehler beim Batch-Insert: {e}")
+                conn.rollback()
+                return 0
+            finally:
+                conn.close()
+
     def _log_scrape(self, source, found, new, error=None):
         """Scrape-Vorgang loggen (Thread-Safe)"""
         with self._db_lock:
@@ -443,54 +549,54 @@ class DomainScraper:
             ''', (datetime.now().isoformat(), source, found, new, error))
             conn.commit()
             conn.close()
-    
+
     def _clean_domain(self, domain):
         """Bereinigt Domain-Namen"""
         if not domain:
             return None
-        
+
         domain = domain.lower().strip()
         domain = re.sub(r'^(https?://)?(www\.)?', '', domain)
         domain = domain.lstrip('.')
-        
+
         while '..' in domain:
             domain = domain.replace('..', '.')
-        
+
         for _ in range(3):
             match = re.search(r'^(.*?[a-z0-9])((?:\.[a-z]+)+)\2$', domain)
             if match:
                 domain = match.group(1) + match.group(2)
             else:
                 break
-        
+
         parts = domain.split('.')
         if len(parts) >= 3:
             if parts[-1] == parts[-2] and len(parts[-1]) <= 4:
                 parts = parts[:-1]
                 domain = '.'.join(parts)
-        
+
         domain = domain.rstrip('.')
-        
+
         # Validiere Domain-Format
         # Prüfe auf ungültige Zeichenfolgen am Anfang/Ende des Labels
         if not re.match(r'^[a-z0-9][a-z0-9\-]*\.[a-z]+(\.[a-z]+)*$', domain):
             logger.warning(f"Ungültiges Domain-Format nach Bereinigung: {domain}")
             return None
-        
+
         # Zusätzliche Prüfung: Domain-Labels dürfen nicht mit - beginnen oder enden
         labels = domain.split('.')
         for label in labels[:-1]:  # TLD auslassen
             if label.startswith('-') or label.endswith('-'):
                 logger.warning(f"Domain-Label beginnt/endet mit -: {domain}")
                 return None
-        
+
         return domain
-    
+
     def _extract_tld(self, domain):
         """TLD aus Domain extrahieren"""
         if not domain or '.' not in domain:
             return '.com'
-        
+
         multi_level_tlds = [
             '.co.uk', '.ac.uk', '.gov.uk', '.org.uk', '.net.uk',
             '.com.au', '.net.au', '.org.au', '.gov.au',
@@ -499,76 +605,76 @@ class DomainScraper:
             '.com.br', '.net.br', '.org.br',
             '.co.in', '.net.in', '.org.in',
         ]
-        
+
         domain_lower = domain.lower()
-        
+
         for tld in multi_level_tlds:
             if domain_lower.endswith(tld):
                 return tld
-        
+
         parts = domain.split('.')
         if len(parts) >= 2:
             return '.' + parts[-1]
-        
+
         return '.com'
-    
+
     def _get_test_limit(self, default_limit: int) -> int:
         """Gibt Limit zurück - im Test-Modus reduziert"""
         return 5 if self.test_mode else default_limit
-    
+
     # ==================== SCRAPER METHODS ====================
-    
+
     def scrape_expired_domains_net(self, limit=200):
         """ExpiredDomains.net scrapen"""
         limit = self._get_test_limit(limit)
         logger.info(f"Scraping ExpiredDomains.net... (Limit: {limit})")
         domains_found = []
         new_count = 0
-        
+
         target_tlds = ['.com', '.io', '.ai', '.de']
-        
+
         list_urls = [
             "https://www.expireddomains.net/deleted-com-domains/",
             "https://www.expireddomains.net/deleted-de-domains/",
             "https://www.expireddomains.net/deleted-io-domains/",
             "https://www.expireddomains.net/deleted-ai-domains/",
         ]
-        
+
         for list_url in list_urls:
             try:
                 logger.info(f"Scraping: {list_url}")
                 response = self.retry_session.get(list_url)
                 response.raise_for_status()
-                
+
                 soup = BeautifulSoup(response.text, 'html.parser')
                 table = soup.find('table', {'class': 'base1'}) or soup.find('table')
-                
+
                 if not table:
                     logger.warning(f"Keine Tabelle gefunden auf {list_url}")
                     continue
-                
+
                 rows = table.find_all('tr')[1:]
                 logger.info(f"Gefunden: {len(rows)} Zeilen auf {list_url}")
-                
+
                 for row in rows[:limit]:
                     try:
                         cells = row.find_all('td')
                         if len(cells) < 2:
                             continue
-                        
+
                         domain_cell = cells[0].find('a')
                         if not domain_cell:
                             continue
-                        
+
                         raw_domain = domain_cell.text.strip()
                         domain_name = self._clean_domain(raw_domain)
                         if not domain_name:
                             continue
-                        
+
                         tld = self._extract_tld(domain_name)
                         if tld not in target_tlds:
                             continue
-                        
+
                         # Extrahiere Metriken
                         age = None
                         if len(cells) > 2:
@@ -576,7 +682,7 @@ class DomainScraper:
                             age_match = re.search(r'(\d+)', age_text.replace(',', ''))
                             if age_match:
                                 age = int(age_match.group(1))
-                        
+
                         backlinks = None
                         for idx in [4, 5, 6, 7]:
                             if len(cells) > idx:
@@ -584,7 +690,7 @@ class DomainScraper:
                                 if bl_text.isdigit():
                                     backlinks = int(bl_text)
                                     break
-                        
+
                         authority = None
                         for idx in [3, 4, 5]:
                             if len(cells) > idx:
@@ -592,7 +698,7 @@ class DomainScraper:
                                 if auth_text.isdigit():
                                     authority = int(auth_text)
                                     break
-                        
+
                         domain_data = {
                             'domain_name': domain_name,
                             'tld': tld,
@@ -603,62 +709,62 @@ class DomainScraper:
                             'source': 'expireddomains.net',
                             'auction_status': 'deleted'
                         }
-                        
+
                         domains_found.append(domain_data)
                         if self._save_domain(domain_data):
                             new_count += 1
-                            
+
                     except Exception as e:
                         logger.debug(f"Fehler beim Parsen einer Zeile: {e}")
                         continue
-                        
+
             except Exception as e:
                 logger.error(f"Fehler beim Scraping von {list_url}: {e}")
                 continue
-        
+
         self._log_scrape('expireddomains.net', len(domains_found), new_count)
         logger.info(f"ExpiredDomains.net: {len(domains_found)} Domains gefunden, {new_count} neu")
         return domains_found
-    
+
     def scrape_dynadot(self, limit=50):
         """Dynadot Auctions scrapen"""
         limit = self._get_test_limit(limit)
         logger.info(f"Scraping Dynadot Auctions... (Limit: {limit})")
         domains_found = []
         new_count = 0
-        
+
         target_tlds = ['.com', '.io', '.ai', '.de', '.net', '.org']
-        
+
         try:
             # Dynadot expired domains page
             url = "https://www.dynadot.com/market/expired-domains"
             response = self.retry_session.get(url)
             soup = BeautifulSoup(response.text, 'html.parser')
-            
+
             # Suche Domain-Elemente
             domain_elements = soup.find_all('div', class_=['domain-name', 'domain-item'])
-            
+
             for elem in domain_elements[:limit]:
                 try:
                     domain_link = elem.find('a')
                     if not domain_link:
                         continue
-                    
+
                     raw_domain = domain_link.text.strip()
                     domain_name = self._clean_domain(raw_domain)
                     if not domain_name:
                         continue
-                    
+
                     tld = self._extract_tld(domain_name)
                     if tld not in target_tlds:
                         continue
-                    
+
                     # Versuche Preis zu extrahieren
                     price = None
                     price_elem = elem.find('span', class_=['price', 'domain-price'])
                     if price_elem:
                         price = price_elem.text.strip()
-                    
+
                     domain_data = {
                         'domain_name': domain_name,
                         'tld': tld,
@@ -667,44 +773,44 @@ class DomainScraper:
                         'price': price,
                         'auction_url': f"https://www.dynadot.com/domain/{domain_name}"
                     }
-                    
+
                     domains_found.append(domain_data)
                     if self._save_domain(domain_data):
                         new_count += 1
-                        
+
                 except Exception as e:
                     logger.debug(f"Fehler beim Parsen: {e}")
                     continue
-            
+
             logger.info(f"Dynadot: {len(domains_found)} Domains gefunden")
-            
+
         except Exception as e:
             logger.error(f"Fehler beim Dynadot Scraping: {e}")
-        
+
         self._log_scrape('dynadot.com', len(domains_found), new_count)
         return domains_found
-    
+
     def scrape_godaddy(self, limit=50):
         """GoDaddy Auctions scrapen"""
         limit = self._get_test_limit(limit)
         logger.info(f"Scraping GoDaddy Auctions... (Limit: {limit})")
         domains_found = []
         new_count = 0
-        
+
         target_tlds = ['.com', '.io', '.ai', '.de', '.net', '.org']
-        
+
         try:
             # GoDaddy auctions API/Seite
             # Hinweis: GoDaddy erfordert oft API-Key für vollen Zugriff
             url = "https://auctions.godaddy.com/beta/trpAuctionListing.aspx"
-            
+
             headers = {
                 'Accept': 'application/json, text/plain, */*',
                 'X-Requested-With': 'XMLHttpRequest'
             }
-            
+
             response = self.retry_session.get(url, headers=headers)
-            
+
             try:
                 data = response.json()
                 auctions = data.get('auctions', [])
@@ -717,23 +823,23 @@ class DomainScraper:
                     domain_cell = row.find('td', class_='domain')
                     if domain_cell:
                         auctions.append({'domain': domain_cell.text.strip()})
-            
+
             for auction in auctions[:limit]:
                 try:
                     raw_domain = auction.get('domain', '')
                     if not raw_domain:
                         continue
-                    
+
                     domain_name = self._clean_domain(raw_domain)
                     if not domain_name:
                         continue
-                    
+
                     tld = self._extract_tld(domain_name)
                     if tld not in target_tlds:
                         continue
-                    
+
                     price = auction.get('price') or auction.get('currentPrice')
-                    
+
                     domain_data = {
                         'domain_name': domain_name,
                         'tld': tld,
@@ -742,57 +848,57 @@ class DomainScraper:
                         'price': str(price) if price else None,
                         'auction_url': f"https://auctions.godaddy.com/trpItemListing.aspx?miid={auction.get('id', '')}"
                     }
-                    
+
                     domains_found.append(domain_data)
                     if self._save_domain(domain_data):
                         new_count += 1
-                        
+
                 except Exception as e:
                     logger.debug(f"Fehler beim Parsen: {e}")
                     continue
-            
+
             logger.info(f"GoDaddy: {len(domains_found)} Domains gefunden")
-            
+
         except Exception as e:
             logger.error(f"Fehler beim GoDaddy Scraping: {e}")
-        
+
         self._log_scrape('godaddy.com', len(domains_found), new_count)
         return domains_found
-    
+
     def scrape_namecheap(self, limit=50):
         """Namecheap Marketplace scrapen"""
         limit = self._get_test_limit(limit)
         logger.info(f"Scraping Namecheap Marketplace... (Limit: {limit})")
         domains_found = []
         new_count = 0
-        
+
         target_tlds = ['.com', '.io', '.ai', '.de', '.net', '.org']
-        
+
         try:
             url = "https://www.namecheap.com/market/"
             response = self.retry_session.get(url)
             soup = BeautifulSoup(response.text, 'html.parser')
-            
+
             domain_items = soup.find_all('div', class_=['domain-item', 'marketplace-item'])
-            
+
             for item in domain_items[:limit]:
                 try:
                     domain_elem = item.find('span', class_='domain-name') or item.find('h3')
                     if not domain_elem:
                         continue
-                    
+
                     raw_domain = domain_elem.text.strip()
                     domain_name = self._clean_domain(raw_domain)
                     if not domain_name:
                         continue
-                    
+
                     tld = self._extract_tld(domain_name)
                     if tld not in target_tlds:
                         continue
-                    
+
                     price_elem = item.find('span', class_='price')
                     price = price_elem.text.strip() if price_elem else None
-                    
+
                     domain_data = {
                         'domain_name': domain_name,
                         'tld': tld,
@@ -800,79 +906,79 @@ class DomainScraper:
                         'auction_status': 'marketplace',
                         'price': price
                     }
-                    
+
                     domains_found.append(domain_data)
                     if self._save_domain(domain_data):
                         new_count += 1
-                        
+
                 except Exception as e:
                     logger.debug(f"Fehler beim Parsen: {e}")
                     continue
-            
+
             logger.info(f"Namecheap: {len(domains_found)} Domains gefunden")
-            
+
         except Exception as e:
             logger.error(f"Fehler beim Namecheap Scraping: {e}")
-        
+
         self._log_scrape('namecheap.com', len(domains_found), new_count)
         return domains_found
-    
+
     # ==================== NEW SCRAPER METHODS v2.1 ====================
-    
+
     def scrape_dropcatch(self, limit=100):
         """
         DropCatch.com API scrapen
-        
+
         DropCatch ist ein führender Drop-Catching Service, der expiring Domains
         direkt beim Registry-Release abfängt und in Auktionen anbietet.
-        
+
         API-Info: https://www.dropcatch.com/hiw/dropcatch-api
         """
         limit = self._get_test_limit(limit)
         logger.info(f"Scraping DropCatch.com... (Limit: {limit})")
         domains_found = []
         new_count = 0
-        
+
         target_tlds = ['.com', '.net', '.org', '.io', '.ai', '.de', '.info', '.biz']
-        
+
         try:
             # DropCatch bietet eine API für expiring domains
             # Die API erfordert typischerweise einen API-Key
             api_key = os.getenv('DROPCATCH_API_KEY', '')
-            
+
             urls_to_scrape = [
                 "https://www.dropcatch.com/api/v1/auctions",
                 "https://www.dropcatch.com/api/v1/expiring",
             ]
-            
+
             headers = {
                 'Accept': 'application/json',
                 'Authorization': f'Bearer {api_key}' if api_key else '',
             }
-            
+
             for url in urls_to_scrape:
                 try:
                     logger.info(f"DropCatch: Scraping {url}")
                     response = self.retry_session.get(url, headers=headers)
-                    
+
                     if response.status_code == 200:
                         data = response.json()
                         auctions = data.get('auctions', []) or data.get('domains', [])
-                        
+
                         for auction in auctions[:limit]:
                             try:
                                 raw_domain = auction.get('domain', auction.get('name', ''))
                                 if not raw_domain:
                                     continue
-                                
+
                                 domain_name = self._clean_domain(raw_domain)
                                 if not domain_name:
                                     continue
-                                
+
                                 tld = self._extract_tld(domain_name)
                                 if tld not in target_tlds:
                                     continue
-                                
+
                                 domain_data = {
                                     'domain_name': domain_name,
                                     'tld': tld,
@@ -884,15 +990,15 @@ class DomainScraper:
                                     'domain_authority': auction.get('domainAuthority'),
                                     'expiry_date': auction.get('dropDate'),
                                 }
-                                
+
                                 domains_found.append(domain_data)
                                 if self._save_domain(domain_data):
                                     new_count += 1
-                                    
+
                             except Exception as e:
                                 logger.debug(f"Fehler beim Parsen einer DropCatch Domain: {e}")
                                 continue
-                                
+
                 except requests.exceptions.HTTPError as e:
                     if e.response.status_code == 401:
                         logger.warning("DropCatch API: Authentifizierung erforderlich. API-Key in Umgebungsvariable DROPCATCH_API_KEY setzen.")
@@ -901,7 +1007,7 @@ class DomainScraper:
                 except Exception as e:
                     logger.warning(f"DropCatch API Error für {url}: {e}")
                     continue
-            
+
             # Fallback: HTML Scraping wenn API nicht verfügbar
             if not domains_found:
                 logger.info("DropCatch: Versuche HTML Scraping als Fallback...")
@@ -909,33 +1015,33 @@ class DomainScraper:
                     "https://www.dropcatch.com/",
                     "https://www.dropcatch.com/auctions",
                 ]
-                
+
                 for url in html_urls:
                     try:
                         response = self.retry_session.get(url)
                         soup = BeautifulSoup(response.text, 'html.parser')
-                        
+
                         # Suche nach Domain-Elementen
                         domain_elements = soup.find_all('div', class_=['auction-item', 'domain-item', 'listing'])
-                        
+
                         for elem in domain_elements[:limit]:
                             try:
                                 domain_link = elem.find('a', href=re.compile(r'/domain/'))
                                 if not domain_link:
                                     continue
-                                
+
                                 raw_domain = domain_link.text.strip()
                                 domain_name = self._clean_domain(raw_domain)
                                 if not domain_name:
                                     continue
-                                
+
                                 tld = self._extract_tld(domain_name)
                                 if tld not in target_tlds:
                                     continue
-                                
+
                                 price_elem = elem.find('span', class_=['bid', 'price'])
                                 price = price_elem.text.strip() if price_elem else None
-                                
+
                                 domain_data = {
                                     'domain_name': domain_name,
                                     'tld': tld,
@@ -944,75 +1050,75 @@ class DomainScraper:
                                     'price': price,
                                     'auction_url': f"https://www.dropcatch.com/domain/{domain_name}"
                                 }
-                                
+
                                 domains_found.append(domain_data)
                                 if self._save_domain(domain_data):
                                     new_count += 1
-                                    
+
                             except Exception as e:
                                 logger.debug(f"Fehler beim HTML Parsen: {e}")
                                 continue
-                                
+
                     except Exception as e:
                         logger.warning(f"DropCatch HTML Scraping Error: {e}")
                         continue
-            
+
             logger.info(f"DropCatch: {len(domains_found)} Domains gefunden")
-            
+
         except Exception as e:
             logger.error(f"Fehler beim DropCatch Scraping: {e}")
-        
+
         self._log_scrape('dropcatch.com', len(domains_found), new_count)
         return domains_found
-    
+
     def scrape_namejet(self, limit=100):
         """
         NameJet.com API scrapen
-        
+
         NameJet bietet Pre-Release Auktionen für expiring Domains von Partner-Registrarn
         wie Network Solutions, Register.com und eNom.
-        
+
         CSV Download: https://www.namejet.com/download.action?format=csv
         """
         limit = self._get_test_limit(limit)
         logger.info(f"Scraping NameJet.com... (Limit: {limit})")
         domains_found = []
         new_count = 0
-        
+
         target_tlds = ['.com', '.net', '.org', '.io', '.ai', '.de', '.info', '.biz', '.tv', '.cc']
-        
+
         try:
             # NameJet bietet einen CSV Download für alle verfügbaren Domains
             csv_url = "https://www.namejet.com/download.action?format=csv"
-            
+
             try:
                 logger.info("NameJet: Lade CSV-Daten...")
                 response = self.retry_session.get(csv_url)
-                
+
                 if response.status_code == 200:
                     import csv
                     import io
-                    
+
                     content = response.content.decode('utf-8', errors='ignore')
                     csv_reader = csv.DictReader(io.StringIO(content))
-                    
+
                     for row in list(csv_reader)[:limit]:
                         try:
                             raw_domain = row.get('Domain', row.get('domain', row.get('DOMAIN', '')))
                             if not raw_domain:
                                 continue
-                            
+
                             domain_name = self._clean_domain(raw_domain)
                             if not domain_name:
                                 continue
-                            
+
                             tld = self._extract_tld(domain_name)
                             if tld not in target_tlds:
                                 continue
-                            
+
                             # Parse Preis
                             price = row.get('Price', row.get('price', row.get('Minimum Bid', '')))
-                            
+
                             # Parse Auktionsstatus
                             status = row.get('Status', 'available_soon').lower()
                             if 'auction' in status:
@@ -1021,7 +1127,7 @@ class DomainScraper:
                                 auction_status = 'pending_delete'
                             else:
                                 auction_status = 'available_soon'
-                            
+
                             domain_data = {
                                 'domain_name': domain_name,
                                 'tld': tld,
@@ -1032,59 +1138,59 @@ class DomainScraper:
                                 'expiry_date': row.get('Drop Date', row.get('Date', '')),
                                 'backlinks': int(row.get('Backlinks', 0)) if row.get('Backlinks') else None,
                             }
-                            
+
                             domains_found.append(domain_data)
                             if self._save_domain(domain_data):
                                 new_count += 1
-                                
+
                         except Exception as e:
                             logger.debug(f"Fehler beim Parsen einer CSV-Zeile: {e}")
                             continue
-                            
+
             except Exception as e:
                 logger.warning(f"NameJet CSV Download fehlgeschlagen: {e}")
-            
+
             # Fallback: HTML Scraping von der Auktionsseite
             if not domains_found:
                 logger.info("NameJet: Versuche HTML Scraping als Fallback...")
-                
+
                 html_urls = [
                     "https://www.namejet.com/",
                     "https://www.namejet.com/Pages/BackorderDomains.aspx",
                 ]
-                
+
                 for url in html_urls:
                     try:
                         response = self.retry_session.get(url)
                         soup = BeautifulSoup(response.text, 'html.parser')
-                        
+
                         # Suche nach Domain-Tabellen
                         tables = soup.find_all('table', {'class': ['auction-table', 'domain-table']})
-                        
+
                         for table in tables:
                             rows = table.find_all('tr')[1:]  # Überspringe Header
-                            
+
                             for row in rows[:limit]:
                                 try:
                                     cells = row.find_all('td')
                                     if len(cells) < 2:
                                         continue
-                                    
+
                                     domain_cell = cells[0].find('a')
                                     if not domain_cell:
                                         continue
-                                    
+
                                     raw_domain = domain_cell.text.strip()
                                     domain_name = self._clean_domain(raw_domain)
                                     if not domain_name:
                                         continue
-                                    
+
                                     tld = self._extract_tld(domain_name)
                                     if tld not in target_tlds:
                                         continue
-                                    
+
                                     price = cells[1].text.strip() if len(cells) > 1 else None
-                                    
+
                                     domain_data = {
                                         'domain_name': domain_name,
                                         'tld': tld,
@@ -1093,82 +1199,82 @@ class DomainScraper:
                                         'price': price,
                                         'auction_url': f"https://www.namejet.com/domain/{domain_name}"
                                     }
-                                    
+
                                     domains_found.append(domain_data)
                                     if self._save_domain(domain_data):
                                         new_count += 1
-                                        
+
                                 except Exception as e:
                                     logger.debug(f"Fehler beim HTML Parsen: {e}")
                                     continue
-                                    
+
                     except Exception as e:
                         logger.warning(f"NameJet HTML Scraping Error: {e}")
                         continue
-            
+
             logger.info(f"NameJet: {len(domains_found)} Domains gefunden")
-            
+
         except Exception as e:
             logger.error(f"Fehler beim NameJet Scraping: {e}")
-        
+
         self._log_scrape('namejet.com', len(domains_found), new_count)
         return domains_found
-    
+
     def scrape_snapnames(self, limit=100):
         """
         SnapNames.com API scrapen
-        
+
         SnapNames (jetzt Teil von NameJet/Web.com) bietet Backorder-Services
         für Pending Delete und Expiring Domains.
-        
+
         Hinweis: SnapNames und NameJet teilen sich nun die gleiche Plattform
         """
         limit = self._get_test_limit(limit)
         logger.info(f"Scraping SnapNames.com... (Limit: {limit})")
         domains_found = []
         new_count = 0
-        
+
         target_tlds = ['.com', '.net', '.org', '.io', '.ai', '.de', '.info', '.biz']
-        
+
         try:
             # SnapNames bietet ebenfalls einen CSV Download
             csv_urls = [
                 "https://www.snapnames.com/download.action?format=csv",
                 "https://www.snapnames.com/domainListing.csv",
             ]
-            
+
             for csv_url in csv_urls:
                 try:
                     logger.info(f"SnapNames: Lade CSV von {csv_url}...")
                     response = self.retry_session.get(csv_url)
-                    
+
                     if response.status_code == 200:
                         import csv
                         import io
-                        
+
                         content = response.content.decode('utf-8', errors='ignore')
                         csv_reader = csv.DictReader(io.StringIO(content))
-                        
+
                         for row in list(csv_reader)[:limit]:
                             try:
                                 raw_domain = row.get('Domain', row.get('domain', row.get('Name', '')))
                                 if not raw_domain:
                                     continue
-                                
+
                                 domain_name = self._clean_domain(raw_domain)
                                 if not domain_name:
                                     continue
-                                
+
                                 tld = self._extract_tld(domain_name)
                                 if tld not in target_tlds:
                                     continue
-                                
+
                                 status = row.get('Status', 'backorder').lower()
                                 if 'auction' in status:
                                     auction_status = 'in_auction'
                                 else:
                                     auction_status = 'backorder'
-                                
+
                                 domain_data = {
                                     'domain_name': domain_name,
                                     'tld': tld,
@@ -1178,56 +1284,56 @@ class DomainScraper:
                                     'auction_url': f"https://www.snapnames.com/domain/{domain_name}",
                                     'expiry_date': row.get('Drop Date', ''),
                                 }
-                                
+
                                 domains_found.append(domain_data)
                                 if self._save_domain(domain_data):
                                     new_count += 1
-                                    
+
                             except Exception as e:
                                 logger.debug(f"Fehler beim CSV Parsen: {e}")
                                 continue
-                        
+
                         # Wenn CSV erfolgreich, breche Schleife ab
                         if domains_found:
                             break
-                            
+
                 except Exception as e:
                     logger.warning(f"SnapNames CSV Download fehlgeschlagen: {e}")
                     continue
-            
+
             # Fallback: HTML Scraping
             if not domains_found:
                 logger.info("SnapNames: Versuche HTML Scraping als Fallback...")
-                
+
                 try:
                     url = "https://www.snapnames.com/"
                     response = self.retry_session.get(url)
                     soup = BeautifulSoup(response.text, 'html.parser')
-                    
+
                     # Suche nach Domain-Elementen
                     domain_items = soup.find_all('tr', class_=['domain-row', 'listing-row'])
-                    
+
                     for item in domain_items[:limit]:
                         try:
                             cells = item.find_all('td')
                             if len(cells) < 2:
                                 continue
-                            
+
                             domain_link = cells[0].find('a')
                             if not domain_link:
                                 continue
-                            
+
                             raw_domain = domain_link.text.strip()
                             domain_name = self._clean_domain(raw_domain)
                             if not domain_name:
                                 continue
-                            
+
                             tld = self._extract_tld(domain_name)
                             if tld not in target_tlds:
                                 continue
-                            
+
                             price = cells[1].text.strip() if len(cells) > 1 else None
-                            
+
                             domain_data = {
                                 'domain_name': domain_name,
                                 'tld': tld,
@@ -1236,37 +1342,37 @@ class DomainScraper:
                                 'price': price,
                                 'auction_url': f"https://www.snapnames.com/domain/{domain_name}"
                             }
-                            
+
                             domains_found.append(domain_data)
                             if self._save_domain(domain_data):
                                 new_count += 1
-                                
+
                         except Exception as e:
                             logger.debug(f"Fehler beim HTML Parsen: {e}")
                             continue
-                            
+
                 except Exception as e:
                     logger.warning(f"SnapNames HTML Scraping Error: {e}")
-            
+
             logger.info(f"SnapNames: {len(domains_found)} Domains gefunden")
-            
+
         except Exception as e:
             logger.error(f"Fehler beim SnapNames Scraping: {e}")
-        
+
         self._log_scrape('snapnames.com', len(domains_found), new_count)
         return domains_found
-    
+
     def scrape_parkio(self, limit=100):
         """
         Park.io API scrapen
-        
+
         Park.io ist spezialisiert auf kurze, wertvolle ccTLDs wie:
         - .io (British Indian Ocean Territory - beliebt bei Tech-Startups)
         - .ly (Libya - beliebt für Domain-Hacks)
         - .to (Tonga)
         - .ai (Anguilla - beliebt für AI-Startups)
         - .me (Montenegro)
-        
+
         API-Doku: http://blog.park.io/articles/park-io-api
         JSON Endpoints:
         - https://park.io/domains.json (alle TLDs)
@@ -1277,16 +1383,16 @@ class DomainScraper:
         logger.info(f"Scraping Park.io... (Limit: {limit})")
         domains_found = []
         new_count = 0
-        
+
         target_tlds = ['.io', '.ly', '.to', '.ai', '.me', '.sh', '.ac', '.gg']
-        
+
         try:
             # Park.io bietet eine einfache JSON API
             json_urls = [
                 "https://park.io/domains.json",  # Alle dropping Domains
                 "https://park.io/auctions.json",  # Aktive Auktionen
             ]
-            
+
             # Spezifische TLD-URLs
             tld_urls = [
                 "https://park.io/domains/index/io.json",
@@ -1295,43 +1401,43 @@ class DomainScraper:
                 "https://park.io/domains/index/to.json",
                 "https://park.io/domains/index/me.json",
             ]
-            
+
             all_urls = json_urls + tld_urls
-            
+
             for url in all_urls:
                 try:
                     logger.info(f"Park.io: Lade {url}...")
                     response = self.retry_session.get(url)
                     response.raise_for_status()
-                    
+
                     data = response.json()
-                    
+
                     if not data.get('success', True):
                         logger.warning(f"Park.io API Error: {data.get('message', 'Unknown error')}")
                         continue
-                    
+
                     domains_list = data.get('domains', [])
-                    
+
                     for domain_info in domains_list[:limit]:
                         try:
                             raw_domain = domain_info.get('name', '')
                             if not raw_domain:
                                 continue
-                            
+
                             domain_name = self._clean_domain(raw_domain)
                             if not domain_name:
                                 continue
-                            
+
                             tld = self._extract_tld(domain_name)
                             if tld not in target_tlds:
                                 continue
-                            
+
                             # Parse Verfügbarkeitsdatum
                             date_available = domain_info.get('date_available', '')
-                            
+
                             # Bestimme Status (Auktion vs. Pending)
                             is_auction = 'auctions' in url
-                            
+
                             domain_data = {
                                 'domain_name': domain_name,
                                 'tld': tld,
@@ -1342,17 +1448,17 @@ class DomainScraper:
                                 'estimated_traffic': domain_info.get('traffic'),
                                 'price': str(domain_info.get('current_bid', domain_info.get('price', ''))) if is_auction else None,
                             }
-                            
+
                             domains_found.append(domain_data)
                             if self._save_domain(domain_data):
                                 new_count += 1
-                                
+
                         except Exception as e:
                             logger.debug(f"Fehler beim Parsen einer Park.io Domain: {e}")
                             continue
-                    
+
                     logger.info(f"Park.io: {len(domains_list)} Einträge von {url} geladen")
-                    
+
                 except requests.exceptions.HTTPError as e:
                     if e.response.status_code == 429:
                         logger.warning("Park.io Rate Limit erreicht. Warte länger...")
@@ -1362,7 +1468,7 @@ class DomainScraper:
                 except Exception as e:
                     logger.warning(f"Park.io Error für {url}: {e}")
                     continue
-            
+
             # Entferne Duplikate
             seen_domains = set()
             unique_domains = []
@@ -1371,23 +1477,23 @@ class DomainScraper:
                 if key not in seen_domains:
                     seen_domains.add(key)
                     unique_domains.append(d)
-            
+
             domains_found = unique_domains
             logger.info(f"Park.io: {len(domains_found)} einzigartige Domains gefunden")
-            
+
         except Exception as e:
             logger.error(f"Fehler beim Park.io Scraping: {e}")
-        
+
         self._log_scrape('park.io', len(domains_found), new_count)
         return domains_found
-    
+
     def scrape_pool(self, limit=100):
         """
         Pool.com API scrapen
-        
+
         Pool.com ist einer der ältesten Drop-Catching Services und spezialisiert
         auf das Abfangen von Domains direkt beim Löschen aus dem Registry.
-        
+
         Features:
         - Backorder-Service für Pending Delete Domains
         - Unterstützung für viele TLDs
@@ -1397,46 +1503,46 @@ class DomainScraper:
         logger.info(f"Scraping Pool.com... (Limit: {limit})")
         domains_found = []
         new_count = 0
-        
+
         target_tlds = ['.com', '.net', '.org', '.io', '.ai', '.de', '.info', '.biz', '.us', '.ca']
-        
+
         try:
             # Pool.com bietet Listen von Pending Delete Domains
             urls_to_scrape = [
                 "https://www.pool.com/domainlisting.aspx",
                 "https://www.pool.com/dropping.aspx",
             ]
-            
+
             for url in urls_to_scrape:
                 try:
                     logger.info(f"Pool.com: Scraping {url}...")
                     response = self.retry_session.get(url)
                     soup = BeautifulSoup(response.text, 'html.parser')
-                    
+
                     # Suche nach Domain-Tabellen
                     tables = soup.find_all('table', {'class': ['domainTable', 'listing-table', 'dataTable']})
-                    
+
                     for table in tables:
                         rows = table.find_all('tr')[1:]  # Überspringe Header
-                        
+
                         for row in rows[:limit]:
                             try:
                                 cells = row.find_all('td')
                                 if len(cells) < 2:
                                     continue
-                                
+
                                 # Extrahiere Domain-Name
                                 domain_cell = cells[0].find('a') or cells[0]
                                 raw_domain = domain_cell.text.strip()
-                                
+
                                 domain_name = self._clean_domain(raw_domain)
                                 if not domain_name:
                                     continue
-                                
+
                                 tld = self._extract_tld(domain_name)
                                 if tld not in target_tlds:
                                     continue
-                                
+
                                 # Extrahiere Drop-Datum
                                 expiry_date = ''
                                 if len(cells) > 1:
@@ -1453,7 +1559,7 @@ class DomainScraper:
                                                 continue
                                     except:
                                         pass
-                                
+
                                 # Extrahiere Backorder-Count (wenn verfügbar)
                                 backorder_count = None
                                 if len(cells) > 2:
@@ -1461,7 +1567,7 @@ class DomainScraper:
                                     match = re.search(r'(\d+)', count_text)
                                     if match:
                                         backorder_count = int(match.group(1))
-                                
+
                                 domain_data = {
                                     'domain_name': domain_name,
                                     'tld': tld,
@@ -1471,50 +1577,50 @@ class DomainScraper:
                                     'expiry_date': expiry_date,
                                     'backlinks': backorder_count,  # Wiederverwendung als Proxy für Interesse
                                 }
-                                
+
                                 domains_found.append(domain_data)
                                 if self._save_domain(domain_data):
                                     new_count += 1
-                                    
+
                             except Exception as e:
                                 logger.debug(f"Fehler beim Parsen einer Pool.com Zeile: {e}")
                                 continue
-                                
+
                 except Exception as e:
                     logger.warning(f"Pool.com Scraping Error für {url}: {e}")
                     continue
-            
+
             # Fallback: Suche nach JSON-API oder alternativen Datenquellen
             if not domains_found:
                 logger.info("Pool.com: Versuche alternative Datenquellen...")
-                
+
                 try:
                     # Versuche die API-Endpunkte
                     api_urls = [
                         "https://www.pool.com/api/domains",
                         "https://www.pool.com/services/domains.asmx/GetDroppingDomains",
                     ]
-                    
+
                     for api_url in api_urls:
                         try:
                             response = self.retry_session.get(api_url, timeout=5)
                             if response.status_code == 200:
                                 data = response.json()
                                 domains_list = data.get('domains', [])
-                                
+
                                 for domain_info in domains_list[:limit]:
                                     raw_domain = domain_info.get('domain', '')
                                     if not raw_domain:
                                         continue
-                                    
+
                                     domain_name = self._clean_domain(raw_domain)
                                     if not domain_name:
                                         continue
-                                    
+
                                     tld = self._extract_tld(domain_name)
                                     if tld not in target_tlds:
                                         continue
-                                    
+
                                     domain_data = {
                                         'domain_name': domain_name,
                                         'tld': tld,
@@ -1522,28 +1628,28 @@ class DomainScraper:
                                         'auction_status': 'pending_delete',
                                         'expiry_date': domain_info.get('dropDate', ''),
                                     }
-                                    
+
                                     domains_found.append(domain_data)
                                     if self._save_domain(domain_data):
                                         new_count += 1
-                                        
+
                         except Exception as e:
                             logger.debug(f"Pool.com API Error: {e}")
                             continue
-                            
+
                 except Exception as e:
                     logger.debug(f"Pool.com Alternative Scraping Error: {e}")
-            
+
             logger.info(f"Pool.com: {len(domains_found)} Domains gefunden")
-            
+
         except Exception as e:
             logger.error(f"Fehler beim Pool.com Scraping: {e}")
-        
+
         self._log_scrape('pool.com', len(domains_found), new_count)
         return domains_found
-    
+
     # ==================== PARALLEL SCRAPING ====================
-    
+
     def run_all_scrapers_parallel(self):
         """Alle Scraper parallel ausführen (inkl. neuen Quellen v2.1)"""
         logger.info("=" * 60)
@@ -1552,7 +1658,7 @@ class DomainScraper:
         logger.info(f"Modus: {'TEST' if self.test_mode else 'PRODUCTION'}")
         logger.info(f"Max Workers: {self.max_workers}")
         logger.info("=" * 60)
-        
+
         # Alle Scraper definieren (v2.1 - mit 5 neuen Quellen)
         scrapers = [
             # Bestehende Quellen
@@ -1567,17 +1673,17 @@ class DomainScraper:
             ('park.io', self.scrape_parkio, 100),
             ('pool.com', self.scrape_pool, 100),
         ]
-        
+
         results = {}
         total_domains = 0
-        
+
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             # Starte alle Scrapers
             future_to_source = {
-                executor.submit(scraper[1], scraper[2]): scraper[0] 
+                executor.submit(scraper[1], scraper[2]): scraper[0]
                 for scraper in scrapers
             }
-            
+
             # Sammle Ergebnisse
             for future in as_completed(future_to_source):
                 source = future_to_source[future]
@@ -1589,7 +1695,7 @@ class DomainScraper:
                 except Exception as e:
                     logger.error(f"✗ {source} fehlgeschlagen: {e}")
                     results[source] = 0
-        
+
         logger.info("=" * 60)
         logger.info("Paralleles Scraping abgeschlossen!")
         logger.info(f"Gesamt: {total_domains} Domains verarbeitet")
@@ -1599,16 +1705,16 @@ class DomainScraper:
             status_icon = "✓" if count > 0 else "○"
             logger.info(f"  {status_icon} {source}: {count} Domains")
         logger.info("=" * 60)
-        
+
         return total_domains
-    
+
     def run_all_scrapers(self, parallel: bool = True):
         """Alle Scraper ausführen"""
         if parallel:
             return self.run_all_scrapers_parallel()
         else:
             return self.run_all_scrapers_sequential()
-    
+
     def run_all_scrapers_sequential(self):
         """Alle Scraper sequentiell ausführen (inkl. neuen Quellen v2.1)"""
         logger.info("=" * 60)
@@ -1616,81 +1722,81 @@ class DomainScraper:
         logger.info(f"Zeit: {datetime.now().isoformat()}")
         logger.info(f"Modus: {'TEST' if self.test_mode else 'PRODUCTION'}")
         logger.info("=" * 60)
-        
+
         total_domains = 0
-        
+
         # Bestehende Quellen
         try:
             domains = self.scrape_expired_domains_net(limit=200)
             total_domains += len(domains)
         except Exception as e:
             logger.error(f"ExpiredDomains.net scraper failed: {e}")
-        
+
         try:
             domains = self.scrape_dynadot(limit=50)
             total_domains += len(domains)
         except Exception as e:
             logger.error(f"Dynadot scraper failed: {e}")
-        
+
         try:
             domains = self.scrape_godaddy(limit=50)
             total_domains += len(domains)
         except Exception as e:
             logger.error(f"GoDaddy scraper failed: {e}")
-        
+
         try:
             domains = self.scrape_namecheap(limit=50)
             total_domains += len(domains)
         except Exception as e:
             logger.error(f"Namecheap scraper failed: {e}")
-        
+
         # Neue Quellen v2.1
         try:
             domains = self.scrape_dropcatch(limit=100)
             total_domains += len(domains)
         except Exception as e:
             logger.error(f"DropCatch scraper failed: {e}")
-        
+
         try:
             domains = self.scrape_namejet(limit=100)
             total_domains += len(domains)
         except Exception as e:
             logger.error(f"NameJet scraper failed: {e}")
-        
+
         try:
             domains = self.scrape_snapnames(limit=100)
             total_domains += len(domains)
         except Exception as e:
             logger.error(f"SnapNames scraper failed: {e}")
-        
+
         try:
             domains = self.scrape_parkio(limit=100)
             total_domains += len(domains)
         except Exception as e:
             logger.error(f"Park.io scraper failed: {e}")
-        
+
         try:
             domains = self.scrape_pool(limit=100)
             total_domains += len(domains)
         except Exception as e:
             logger.error(f"Pool.com scraper failed: {e}")
-        
+
         logger.info("=" * 60)
         logger.info(f"Scraping abgeschlossen!")
         logger.info(f"Gesamt: {total_domains} Domains verarbeitet")
         logger.info("=" * 60)
-        
+
         return total_domains
-    
+
     # ==================== UTILITY METHODS ====================
-    
+
     def test_connection(self, url: str = "https://httpbin.org/get") -> bool:
         """Teste Verbindung und zeige Details"""
         try:
             logger.info(f"Teste Verbindung zu {url}...")
             response = self.retry_session.get(url)
             logger.info(f"Verbindung erfolgreich! Status: {response.status_code}")
-            
+
             try:
                 data = response.json()
                 headers = data.get('headers', {})
@@ -1698,26 +1804,26 @@ class DomainScraper:
                 logger.info(f"Origin IP: {data.get('origin', 'N/A')}")
             except:
                 pass
-            
+
             return True
         except Exception as e:
             logger.error(f"Verbindungstest fehlgeschlagen: {e}")
             return False
-    
+
     def test_proxies(self) -> Dict[str, bool]:
         """Teste alle konfigurierten Proxies"""
         results = {}
         test_url = "https://httpbin.org/ip"
-        
+
         if not self.retry_session.proxy_manager:
             logger.warning("Keine Proxies konfiguriert!")
             return results
-        
+
         pm = self.retry_session.proxy_manager
-        
+
         if hasattr(pm, 'working_proxies'):
             logger.info(f"Teste {len(pm.working_proxies)} Proxies...")
-            
+
             for proxy_url in pm.working_proxies:
                 try:
                     if hasattr(pm, 'test_proxy'):
@@ -1727,31 +1833,31 @@ class DomainScraper:
                         response = requests.get(test_url, proxies=proxies, timeout=10)
                         success = response.status_code == 200
                         ip = None
-                    
+
                     results[proxy_url] = success
-                    
+
                     if success:
                         logger.info(f"✓ Proxy funktioniert: {proxy_url} (IP: {ip})")
                     else:
                         logger.warning(f"✗ Proxy fehlgeschlagen: {proxy_url}")
-                        
+
                 except Exception as e:
                     logger.error(f"✗ Proxy Fehler {proxy_url}: {e}")
                     results[proxy_url] = False
-        
+
         working = sum(1 for v in results.values() if v)
         logger.info(f"Proxy-Test abgeschlossen: {working}/{len(results)} Proxies funktionieren")
-        
+
         return results
-    
+
     def refresh_proxies(self) -> int:
         """Aktualisiere Proxies von Free Sources"""
         if not self.retry_session.proxy_manager:
             logger.warning("Kein ProxyManager konfiguriert!")
             return 0
-        
+
         pm = self.retry_session.proxy_manager
-        
+
         if hasattr(pm, 'fetch_and_test_proxies'):
             logger.info("Aktualisiere Proxies...")
             working = pm.fetch_and_test_proxies(force=True)
@@ -1760,41 +1866,248 @@ class DomainScraper:
         else:
             logger.warning("ProxyManager unterstützt kein Auto-Fetch")
             return 0
-    
+
     def get_stats(self):
         """Statistiken aus der Datenbank abrufen"""
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
-        
+
         cursor.execute("SELECT COUNT(*) FROM domains")
         total_domains = cursor.fetchone()[0]
-        
+
         cursor.execute("SELECT source, COUNT(*) FROM domains GROUP BY source")
         by_source = cursor.fetchall()
-        
+
         cursor.execute("""
-            SELECT source, domains_found, domains_new, scrape_time 
-            FROM scrape_log 
-            ORDER BY scrape_time DESC 
+            SELECT source, domains_found, domains_new, scrape_time
+            FROM scrape_log
+            ORDER BY scrape_time DESC
             LIMIT 10
         """)
         recent_logs = cursor.fetchall()
-        
+
         conn.close()
-        
+
         return {
             'total_domains': total_domains,
             'by_source': by_source,
             'recent_logs': recent_logs
         }
-    
+
     def close(self):
         """Ressourcen freigeben"""
         self.retry_session.close()
 
 
+class DomainQualityScorer:
+    """
+    Verbessertes Domain-Qualitäts-Scoring mit ML-ähnlichen Heuristiken.
+    
+    Bewertet Domains basierend auf:
+    - TLD-Wertigkeit (.com, .ai, .io, etc.)
+    - Keyword-Relevanz (AI, Crypto, Tech, etc.)
+    - Domain-Länge (kürzer = besser)
+    - Backlinks & Domain Authority
+    - Alter der Domain
+    """
+    
+    def __init__(self):
+        self.keyword_weights = {
+            'ai': 1.5, 'ml': 1.4, 'data': 1.3, 'bot': 1.2,
+            'crypto': 1.2, 'web3': 1.3, 'nft': 1.1, 'block': 1.2,
+            'app': 1.2, 'cloud': 1.2, 'api': 1.3, 'dev': 1.2,
+            'health': 1.1, 'money': 1.2, 'pay': 1.3, 'cash': 1.2,
+            'shop': 1.1, 'store': 1.1, 'buy': 1.2, 'sell': 1.1,
+            'game': 1.1, 'play': 1.0, 'fun': 0.9, 'win': 1.1,
+            'tech': 1.3, 'code': 1.2, 'soft': 1.1, 'ware': 1.0,
+            'net': 1.0, 'web': 1.1, 'site': 1.0, 'host': 1.0,
+            'hub': 1.1, 'lab': 1.1, 'box': 1.0, 'base': 1.1,
+        }
+        self.tld_scores = {
+            'com': 20, 'ai': 18, 'io': 17, 'co': 16,
+            'app': 15, 'dev': 14, 'net': 12, 'org': 12,
+            'info': 8, 'biz': 8, 'xyz': 8, 'me': 10,
+            'ly': 11, 'to': 9, 'sh': 10, 'ac': 9,
+            'de': 13, 'uk': 11, 'eu': 10, 'fr': 9,
+        }
+        self.premium_prefixes = ['my', 'get', 'try', 'go', 'hi', 'we', 'the', 'i', 'you']
+        self.premium_suffixes = ['ly', 'ify', 'able', 'ful', 'est', 'er', 'ist']
+    
+    def calculate_score(self, domain_data: Dict[str, Any]) -> int:
+        """
+        Berechnet einen Qualitäts-Score (0-100) für eine Domain.
+        
+        Args:
+            domain_data: Dictionary mit Domain-Informationen
+            
+        Returns:
+            Score zwischen 0 und 100
+        """
+        score = 0
+        domain_name = domain_data.get('domain_name', '').lower()
+        name_part = domain_name.split('.')[0] if '.' in domain_name else domain_name
+        
+        # TLD Score (0-20 Punkte)
+        tld = domain_data.get('tld', '.com').lstrip('.').lower()
+        score += self.tld_scores.get(tld, 5)
+        
+        # Keyword Score (0-30 Punkte)
+        keyword_score = 0
+        for keyword, weight in self.keyword_weights.items():
+            if keyword in name_part:
+                keyword_score = max(keyword_score, 10 * weight)
+        score += min(keyword_score, 30)
+        
+        # Länge Score (0-20 Punkte) - kürzer ist besser
+        name_length = len(name_part)
+        if name_length <= 4:
+            score += 20
+        elif name_length <= 6:
+            score += 15
+        elif name_length <= 8:
+            score += 10
+        elif name_length <= 12:
+            score += 5
+        
+        # Premium Präfix/Suffix Bonus (0-10 Punkte)
+        for prefix in self.premium_prefixes:
+            if name_part.startswith(prefix):
+                score += 5
+                break
+        for suffix in self.premium_suffixes:
+            if name_part.endswith(suffix):
+                score += 5
+                break
+        
+        # Backlinks Score (0-15 Punkte)
+        backlinks = domain_data.get('backlinks', 0) or 0
+        if backlinks > 10000:
+            score += 15
+        elif backlinks > 1000:
+            score += 10
+        elif backlinks > 100:
+            score += 5
+        elif backlinks > 10:
+            score += 2
+        
+        # Domain Authority Score (0-10 Punkte)
+        da = domain_data.get('domain_authority', 0) or 0
+        score += min(da / 5, 10)
+        
+        # Alter Score (0-10 Punkte)
+        age = domain_data.get('age_years', 0) or 0
+        if age > 10:
+            score += 10
+        elif age > 5:
+            score += 7
+        elif age > 2:
+            score += 4
+        elif age > 0:
+            score += 2
+        
+        # Memorable/Pronounceable Bonus (0-5 Punkte)
+        if self._is_memorable(name_part):
+            score += 5
+        
+        return min(int(score), 100)  # Cap at 100
+    
+    def _is_memorable(self, name: str) -> bool:
+        """
+        Prüft ob ein Domain-Name einprägsam ist.
+        
+        Kriterien:
+        - Keine aufeinanderfolgenden Zahlen
+        - Maximal ein Bindestrich
+        - Aussprachbar (Wechsel von Vokalen und Konsonanten)
+        """
+        if len(name) <= 3:
+            return True
+        
+        # Zu viele Zahlen
+        digits = sum(1 for c in name if c.isdigit())
+        if digits > 2:
+            return False
+        
+        # Zu viele Bindestriche
+        if name.count('-') > 1:
+            return False
+        
+        # Prüfe auf wiederholte Buchstaben (z.B. "aa", "bb")
+        consecutive = sum(1 for i in range(len(name)-1) if name[i] == name[i+1])
+        if consecutive > 1:
+            return False
+        
+        return True
+    
+    def get_price_estimate(self, domain_data: Dict[str, Any], score: int = None) -> Dict[str, Any]:
+        """
+        Schätzt den Verkaufspreis einer Domain.
+        
+        Returns:
+            Dictionary mit Preis-Schätzung und Details
+        """
+        if score is None:
+            score = self.calculate_score(domain_data)
+        
+        # Basis-Preis basierend auf Score
+        if score >= 80:
+            base_price = random.randint(1000, 5000)
+        elif score >= 60:
+            base_price = random.randint(500, 1500)
+        elif score >= 40:
+            base_price = random.randint(200, 800)
+        elif score >= 20:
+            base_price = random.randint(50, 300)
+        else:
+            base_price = random.randint(10, 100)
+        
+        # TLD-Multiplikator
+        tld = domain_data.get('tld', '.com').lstrip('.').lower()
+        multipliers = {
+            'com': 2.0, 'ai': 1.8, 'io': 1.6, 'co': 1.4,
+            'app': 1.3, 'dev': 1.2, 'net': 1.1, 'org': 1.0,
+        }
+        multiplier = multipliers.get(tld, 0.8)
+        
+        # Backlinks Bonus
+        backlinks = domain_data.get('backlinks', 0) or 0
+        if backlinks > 1000:
+            multiplier += 0.5
+        elif backlinks > 100:
+            multiplier += 0.2
+        
+        estimated_price = int(base_price * multiplier)
+        
+        return {
+            'estimated_price': estimated_price,
+            'price_range': f'${int(estimated_price * 0.7)} - ${int(estimated_price * 1.3)}',
+            'confidence': 'high' if score > 60 else 'medium' if score > 40 else 'low',
+            'score': score,
+            'factors': {
+                'base_price': base_price,
+                'tld_multiplier': multiplier,
+                'tld': tld,
+                'backlinks': backlinks,
+            }
+        }
+
+
 def main():
-    """Hauptfunktion mit Argument-Parser"""
+    """Hauptfunktion mit Argument-Parser und Graceful Shutdown"""
+    import signal
+    
+    # Graceful Shutdown Handler
+    shutdown_requested = False
+    
+    def signal_handler(signum, frame):
+        nonlocal shutdown_requested
+        sig_name = signal.Signals(signum).name
+        logger.info(f"Signal {sig_name} empfangen, initiere Graceful Shutdown...")
+        shutdown_requested = True
+    
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
     parser = argparse.ArgumentParser(
         description='Domain Scraper - Sammelt expired Domains von verschiedenen Quellen',
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -1835,14 +2148,16 @@ Beispiele:
                         help='Minimale Pause zwischen Requests (default: 1.0)')
     parser.add_argument('--max-delay', type=float, default=3.0,
                         help='Maximale Pause zwischen Requests (default: 3.0)')
-    
+    parser.add_argument('--batch-size', type=int, default=100,
+                        help='Batch-Größe für DB-Inserts (default: 100)')
+
     args = parser.parse_args()
-    
+
     # Proxy-Liste parsen
     proxy_list = None
     if args.proxy_list:
         proxy_list = [f"http://{p.strip()}" for p in args.proxy_list.split(',')]
-    
+
     # Scraper initialisieren
     scraper = DomainScraper(
         use_proxies=args.use_proxies,
@@ -1855,44 +2170,56 @@ Beispiele:
         max_workers=args.workers
     )
     
+    # Speichere Batch-Size für später
+    scraper.batch_size = args.batch_size
+
     try:
         # Verbindungstest
         if args.connection_test:
             success = scraper.test_connection()
             sys.exit(0 if success else 1)
-        
+
         # Proxies aktualisieren
         if args.refresh_proxies:
             count = scraper.refresh_proxies()
             sys.exit(0 if count > 0 else 1)
-        
+
         # Proxy-Test
         if args.proxy_test:
             results = scraper.test_proxies()
             working = sum(1 for v in results.values() if v)
             sys.exit(0 if working > 0 else 1)
-        
+
         # Normale Ausführung
         stats = scraper.get_stats()
         logger.info(f"Aktuelle Datenbank-Statistik: {stats['total_domains']} Domains gespeichert")
         
+        if shutdown_requested:
+            logger.info("Shutdown angefordert vor Start - beende...")
+            return 0
+
         total = scraper.run_all_scrapers(parallel=not args.sequential)
         
+        if shutdown_requested:
+            logger.info("Shutdown während Ausführung - speichere Zwischenstand...")
+
         stats = scraper.get_stats()
         logger.info(f"Neue Gesamtstatistik: {stats['total_domains']} Domains in Datenbank")
-        
+
         return total
-        
+
     finally:
+        logger.info("Ressourcen werden freigegeben...")
         scraper.close()
+        logger.info("Scraper beendet.")
 
 
-def run(use_proxies=False, proxy_list=None, use_free_proxies=False, 
+def run(use_proxies=False, proxy_list=None, use_free_proxies=False,
         test_mode=False, timeout=10, min_delay=1.0, max_delay=3.0,
         max_workers=3, parallel=True):
     """
     Hauptfunktion für main.py Integration
-    
+
     Args:
         use_proxies: Aktiviere Proxy-Support
         proxy_list: Liste von Proxy-URLs
@@ -1903,12 +2230,12 @@ def run(use_proxies=False, proxy_list=None, use_free_proxies=False,
         max_delay: Maximale Pause
         max_workers: Anzahl paralleler Worker
         parallel: Paralleles Scraping aktivieren
-    
+
     Returns:
         int: Anzahl der gefundenen Domains
     """
     logger.info("Starte Domain Scraper...")
-    
+
     scraper = DomainScraper(
         use_proxies=use_proxies,
         proxy_list=proxy_list,
@@ -1919,7 +2246,7 @@ def run(use_proxies=False, proxy_list=None, use_free_proxies=False,
         max_delay=max_delay,
         max_workers=max_workers
     )
-    
+
     try:
         count = scraper.run_all_scrapers(parallel=parallel)
         logger.info(f"Scraper fertig. {count} Domains gefunden.")
