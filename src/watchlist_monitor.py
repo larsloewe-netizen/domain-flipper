@@ -18,6 +18,9 @@ GMAIL_USER = os.getenv('GMAIL_USER', 'hansdieterbot@gmail.com')
 GMAIL_PASSWORD = os.getenv('GMAIL_APP_PASSWORD')
 RECIPIENT = 'lars.loewe@gmail.com'
 
+# E-Mail deaktiviert - nur noch Telegram über Cron-Jobs
+EMAIL_ENABLED = False
+
 # Zu überwachende Domains
 WATCHLIST = [
     {
@@ -31,7 +34,11 @@ DB_PATH = '/root/.openclaw/workspace/projects/domain-flipper/data/expired_domain
 
 
 def send_email(subject: str, body: str, html_body: Optional[str] = None) -> bool:
-    """Sendet E-Mail über Gmail SMTP"""
+    """Sendet E-Mail über Gmail SMTP - AKTUELL DEAKTIVIERT"""
+    if not EMAIL_ENABLED:
+        print(f"📧 E-Mail deaktiviert (nur Telegram): {subject}")
+        return True
+    
     if not GMAIL_PASSWORD:
         print("❌ GMAIL_APP_PASSWORD nicht gesetzt")
         return False
