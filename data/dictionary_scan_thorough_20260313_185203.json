@@ -1,0 +1,62 @@
+[
+  {
+    "domain": "cagn.de",
+    "word": "cagn",
+    "tld": "de",
+    "available": true,
+    "price": 11.98,
+    "checks": {
+      "whois": "free",
+      "dns": "no_dns"
+    },
+    "score": 85
+  },
+  {
+    "domain": "cyul.de",
+    "word": "cyul",
+    "tld": "de",
+    "available": true,
+    "price": 11.98,
+    "checks": {
+      "whois": "free",
+      "dns": "no_dns"
+    },
+    "score": 85
+  },
+  {
+    "domain": "dowf.de",
+    "word": "dowf",
+    "tld": "de",
+    "available": true,
+    "price": 11.98,
+    "checks": {
+      "whois": "free",
+      "dns": "no_dns"
+    },
+    "score": 85
+  },
+  {
+    "domain": "fdub.de",
+    "word": "fdub",
+    "tld": "de",
+    "available": true,
+    "price": 11.98,
+    "checks": {
+      "whois": "free",
+      "dns": "no_dns"
+    },
+    "score": 85
+  },
+  {
+    "domain": "ghuz.de",
+    "word": "ghuz",
+    "tld": "de",
+    "available": true,
+    "price": 11.98,
+    "checks": {
+      "whois": "free",
+      "dns": "no_dns"
+    },
+    "score": 85
+  }
+]
